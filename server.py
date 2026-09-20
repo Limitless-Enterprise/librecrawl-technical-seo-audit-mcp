@@ -2054,6 +2054,10 @@ def librecrawl_site_check(url: str) -> dict:
     sitemap.xml (existence, URL count, sitemap index), HTTPS redirect
     (http → https), and www/non-www canonicalisation.
 
+    In attended Firstlook staging mode, the URL must normalize to the exact
+    server-approved URL. The check uses pinned-IP HTTPS without redirects;
+    HTTP and alternate-host canonicalisation checks are skipped.
+
     USE THIS when asked:
     - "check robots.txt", "is the sitemap set up", "quick site health"
     - "does [site] redirect http to https", "www vs non-www check"
@@ -2763,6 +2767,10 @@ def librecrawl_schema_check(url: str) -> dict:
     Returns schema types found, which Google rich results they unlock
     (FAQ accordion, star ratings, breadcrumbs, product snippets, etc.),
     and which high-value schema types are missing.
+
+    In attended Firstlook staging mode, the URL must normalize to the exact
+    server-approved URL and is fetched through pinned-IP HTTPS without
+    redirects.
 
     USE THIS when asked:
     - "does [page] have schema markup", "check structured data", "JSON-LD audit"

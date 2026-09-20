@@ -11,7 +11,8 @@
   model, rollback procedure, and immutable deployment-evidence checklist.
 
 ### Fixed
-- Pin `mcp<2`; the server uses the FastMCP v1 API, which MCP 2.x removed.
+- Pin `mcp<2` in `requirements.txt`; the server uses the FastMCP v1 API,
+  which MCP 2.x removed.
 
 ## [2.2.0] — 2026-07-14
 ### Added
