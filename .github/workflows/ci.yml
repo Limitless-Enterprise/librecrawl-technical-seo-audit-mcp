@@ -52,4 +52,17 @@ jobs:
         env:
           LIBRECRAWL_STATE_DB: ${{ runner.temp }}/librecrawl-test-state.db
           REPORTS_DIR: ${{ runner.temp }}/test-reports
-        run: python -m unittest discover -v
+        run: |
+          set +e
+          python -m unittest discover -v
+          test_exit=$?
+          set -e
+
+          # The pre-Firstlook default branch has no tests. Once the security
+          # module lands, an empty suite is an error so those tests cannot
+          # disappear without failing CI.
+          if [[ $test_exit -eq 5 && ! -e firstlook_security.py ]]; then
+            echo "No tests exist on the pre-Firstlook tree."
+            exit 0
+          fi
+          exit "$test_exit"
