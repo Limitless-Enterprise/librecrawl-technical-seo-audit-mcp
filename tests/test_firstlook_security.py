@@ -75,8 +75,27 @@ class FirstlookConfigurationTests(unittest.TestCase):
             boundary.authorize_tool_url("https://attacker.example/")
 
     def test_invalid_boolean_fails_closed(self):
-        with self.assertRaises(FirstlookConfigurationError):
-            load_firstlook_boundary({"FIRSTLOOK_STAGING_MODE": "sometimes"})
+        for value in (
+            "sometimes",
+            "1",
+            "yes",
+            "on",
+            "0",
+            "no",
+            "off",
+            "TRUE",
+            " true ",
+        ):
+            with self.subTest(value=value), self.assertRaises(
+                FirstlookConfigurationError
+            ):
+                load_firstlook_boundary({"FIRSTLOOK_STAGING_MODE": value})
+
+    def test_literal_false_disables_mode(self):
+        self.assertEqual(
+            load_firstlook_boundary({"FIRSTLOOK_STAGING_MODE": "false"}),
+            (False, None),
+        )
 
     def test_direct_private_ipv4_and_ipv6_are_rejected_at_configuration(self):
         for url in (

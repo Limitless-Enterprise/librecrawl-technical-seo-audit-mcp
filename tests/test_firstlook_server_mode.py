@@ -218,12 +218,92 @@ class FirstlookServerModeTests(unittest.TestCase):
                 "https://www.limitlessenterprise.ai/audit"
             )
             sitemap_attempts = [
-                attempt for attempt in attempts if attempt[3] != "/robots.txt"
+                attempt for attempt in attempts if attempt[3].endswith(".xml")
             ]
             assert len(sitemap_attempts) == 10
             assert capped_site["sitemap"]["documents_attempted"] == 10
             assert capped_site["robots_txt"]["sitemap_declared_count"] == 50
             assert len(capped_site["robots_txt"]["sitemap_declared"]) == 10
+
+            class FrontierConnection(Connection):
+                def getresponse(self):
+                    if self.path == "/robots.txt":
+                        return Response(
+                            b"Sitemap: https://www.limitlessenterprise.ai/sitemap.xml"
+                        )
+                    if self.path == "/sitemap.xml":
+                        return Response(
+                            b"<sitemapindex><sitemap><loc>"
+                            b"https://www.limitlessenterprise.ai/critical.xml"
+                            b"</loc></sitemap></sitemapindex>"
+                        )
+                    if self.path in ("/sitemap_index.xml", "/sitemap-index.xml"):
+                        return Response(b"missing", status=404)
+                    if self.path == "/critical.xml":
+                        urls = (
+                            "https://www.limitlessenterprise.ai/book-call",
+                            "https://www.limitlessenterprise.ai/blog/growth?utm_source=test",
+                            "https://www.limitlessenterprise.ai/blog/growth?ref=duplicate",
+                            "https://www.limitlessenterprise.ai/download-checklist",
+                            "https://www.limitlessenterprise.ai/services/seo",
+                            "https://www.limitlessenterprise.ai/services/ppc",
+                            "https://www.limitlessenterprise.ai/pricing",
+                            "https://www.limitlessenterprise.ai/case-studies/win",
+                            "https://www.limitlessenterprise.ai/contact",
+                            "https://www.limitlessenterprise.ai/category/news",
+                            "https://attacker.example/escape",
+                        )
+                        body = "<urlset>" + "".join(
+                            f"<url><loc>{url}</loc></url>" for url in urls
+                        ) + "</urlset>"
+                        return Response(body.encode())
+                    if self.path in ("/services/seo", "/services/ppc"):
+                        return Response(
+                            b'<link rel="canonical" href="/services">'
+                            b"<title>Service</title><h1>Service</h1>"
+                        )
+                    return Response(
+                        f"<title>{self.path}</title><h1>{self.path}</h1>".encode()
+                    )
+
+            attempts.clear()
+            audit_status["value"] = 200
+            server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
+                "https://www.limitlessenterprise.ai/audit",
+                resolver=lambda _host, _port: (PUBLIC_IP,),
+                connection_factory=FrontierConnection,
+            )
+            frontier = server.librecrawl_site_check(
+                "https://www.limitlessenterprise.ai/audit"
+            )
+            audited_paths = [
+                attempt[3]
+                for attempt in attempts
+                if attempt[3] != "/robots.txt" and not attempt[3].endswith(".xml")
+            ]
+            assert len(audited_paths) == 10
+            assert "/" in audited_paths
+            assert "/book-call" in audited_paths
+            assert "/blog/growth" in audited_paths
+            assert audited_paths.count("/blog/growth") == 1
+            assert "/download-checklist" in audited_paths
+            assert "/category/news" not in audited_paths
+            assert all("attacker.example" not in str(attempt) for attempt in attempts)
+            quick_audit = frontier["quick_audit"]
+            assert quick_audit["pages_selected"] == 10
+            assert quick_audit["canonical_pages_audited"] == 9
+            assert quick_audit["external_links_crawled"] is False
+            assert {"homepage", "booking", "content", "lead_magnet"}.issubset(
+                quick_audit["categories_discovered"]
+            )
+            booking = next(
+                page
+                for page in quick_audit["selected_pages"]
+                if page["category"] == "booking"
+            )
+            assert booking["provenance"] == [
+                "sitemap:https://www.limitlessenterprise.ai/critical.xml"
+            ]
 
             blocked = (
                 server.librecrawl_audit("https://www.limitlessenterprise.ai/audit"),

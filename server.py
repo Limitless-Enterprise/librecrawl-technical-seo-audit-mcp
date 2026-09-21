@@ -13,8 +13,9 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
+from html import unescape as html_unescape
 from html.parser import HTMLParser
-from urllib.parse import urlparse, unquote
+from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit, unquote
 import httpx
 from mcp.server.fastmcp import FastMCP
 from firstlook_security import (
@@ -328,6 +329,174 @@ def _ensure_crawler_ready() -> dict:
 
 FIRSTLOOK_SITE_CHECK_SECONDS = 30.0
 FIRSTLOOK_MAX_SITEMAP_DOCUMENTS = 10
+FIRSTLOOK_MAX_PAGES = 10
+_FIRSTLOOK_PAGE_CATEGORIES = (
+    "homepage",
+    "booking",
+    "content",
+    "lead_magnet",
+    "conversion_cta",
+    "service",
+    "offer",
+    "trust",
+    "contact",
+    "other",
+)
+_FIRSTLOOK_CRITICAL_CATEGORIES = frozenset(_FIRSTLOOK_PAGE_CATEGORIES[1:-1])
+_FIRSTLOOK_UTILITY_PATH = re.compile(
+    r"/(?:tag|category|author|archive|feed|search|wp-admin|wp-login|cart|"
+    r"checkout|account|login|privacy|terms|cookies?|thank-you|404)(?:/|$)|"
+    r"/page/\d+(?:/|$)",
+    re.IGNORECASE,
+)
+
+
+class _FirstlookPageExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.canonical = None
+        self.title = ""
+        self.h1 = ""
+        self._capture = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = {key.lower(): value for key, value in attrs}
+        lowered = tag.lower()
+        if lowered == "link" and "canonical" in (
+            attributes.get("rel") or ""
+        ).lower().split():
+            self.canonical = attributes.get("href")
+        elif lowered in ("title", "h1"):
+            self._capture = lowered
+
+    def handle_endtag(self, tag):
+        if tag.lower() == self._capture:
+            self._capture = None
+
+    def handle_data(self, data):
+        if self._capture == "title":
+            self.title += data
+        elif self._capture == "h1":
+            self.h1 += data
+
+
+def _firstlook_page_category(url: str, root: str) -> str:
+    path = unquote(urlsplit(url).path).lower().rstrip("/") or "/"
+    if url == root or path == "/":
+        return "homepage"
+    if re.search(r"/(?:book|booking|schedule|appointment)(?:/|$|-)", path):
+        return "booking"
+    if re.search(
+        r"/(?:blog|article|articles|resource|resources|guide|guides|insight|"
+        r"insights|news)(?:/|$|-)",
+        path,
+    ):
+        return "content"
+    if re.search(
+        r"/(?:download|ebook|checklist|template|toolkit|lead-magnet|free)"
+        r"(?:/|$|-)",
+        path,
+    ):
+        return "lead_magnet"
+    if re.search(
+        r"/(?:audit|consult|consultation|demo|get-started|start|quote|apply)"
+        r"(?:/|$|-)",
+        path,
+    ):
+        return "conversion_cta"
+    if re.search(r"/(?:service|services|solution|solutions)(?:/|$|-)", path):
+        return "service"
+    if re.search(
+        r"/(?:offer|offers|pricing|package|packages|plan|plans)(?:/|$|-)",
+        path,
+    ):
+        return "offer"
+    if re.search(
+        r"/(?:about|case-study|case-studies|testimonial|testimonials|review|"
+        r"reviews|results)(?:/|$|-)",
+        path,
+    ):
+        return "trust"
+    if re.search(r"/(?:contact|connect)(?:/|$|-)", path):
+        return "contact"
+    return "other"
+
+
+def _firstlook_template_key(url: str, category: str) -> str:
+    path = unquote(urlsplit(url).path).lower().rstrip("/") or "/"
+    if category == "content":
+        return "content"
+    path = re.sub(r"/[0-9a-f]{8,}(?=/|$)", "/:id", path)
+    path = re.sub(r"/\d+(?=/|$)", "/:id", path)
+    return path
+
+
+def _firstlook_candidate_url(raw_url: str, root: str):
+    assert FIRSTLOOK_BOUNDARY is not None
+    absolute = urljoin(f"{root}/", html_unescape(raw_url.strip()))
+    split = urlsplit(absolute)
+    without_query = urlunsplit((split.scheme, split.netloc, split.path or "/", "", ""))
+    return FIRSTLOOK_BOUNDARY.validate_same_host_url(without_query).normalized
+
+
+def _firstlook_add_page_candidate(
+    candidates, candidate_index, raw_url, root, provenance
+):
+    try:
+        normalized = _firstlook_candidate_url(raw_url, root)
+    except FirstlookBoundaryError as exc:
+        return {"url": raw_url, "reason": str(exc)}
+    path = unquote(urlsplit(normalized).path)
+    if _FIRSTLOOK_UTILITY_PATH.search(path):
+        return {"url": normalized, "reason": "archive or utility path skipped"}
+    if normalized in candidate_index:
+        candidate_index[normalized]["provenance"].append(provenance)
+        return None
+    category = _firstlook_page_category(normalized, root)
+    candidate = {
+        "url": normalized,
+        "category": category,
+        "template_key": _firstlook_template_key(normalized, category),
+        "provenance": [provenance],
+        "discovery_order": len(candidates),
+    }
+    candidates.append(candidate)
+    candidate_index[normalized] = candidate
+    return None
+
+
+def _firstlook_select_pages(candidates):
+    category_order = {
+        name: index for index, name in enumerate(_FIRSTLOOK_PAGE_CATEGORIES)
+    }
+    ordered = sorted(
+        candidates,
+        key=lambda item: (category_order[item["category"]], item["discovery_order"]),
+    )
+    selected = []
+    seen_templates = set()
+    selected_urls = set()
+    for category in _FIRSTLOOK_PAGE_CATEGORIES[:-1]:
+        candidate = next(
+            (item for item in ordered if item["category"] == category), None
+        )
+        if candidate is None:
+            continue
+        selected.append(candidate)
+        selected_urls.add(candidate["url"])
+        seen_templates.add(candidate["template_key"])
+    for candidate in ordered:
+        if len(selected) == FIRSTLOOK_MAX_PAGES:
+            break
+        if candidate["url"] in selected_urls:
+            continue
+        key = candidate["template_key"]
+        if key in seen_templates:
+            continue
+        seen_templates.add(key)
+        selected_urls.add(candidate["url"])
+        selected.append(candidate)
+    return selected
 
 
 def _firstlook_request_timeout(deadline: float, maximum: float) -> float:
@@ -344,6 +513,19 @@ def _firstlook_site_check(base_url: str) -> dict:
     deadline = time.monotonic() + FIRSTLOOK_SITE_CHECK_SECONDS
     approved = urlparse(approved_url)
     root = f"https://{approved.netloc}"
+    page_candidates = []
+    page_candidate_index = {}
+    rejected_page_candidates = []
+    _firstlook_add_page_candidate(
+        page_candidates, page_candidate_index, root, root, "derived_homepage"
+    )
+    _firstlook_add_page_candidate(
+        page_candidates,
+        page_candidate_index,
+        approved_url,
+        root,
+        "approved_target",
+    )
     results = {
         "firstlook_staging": {
             "approved_url": approved_url,
@@ -406,19 +588,21 @@ def _firstlook_site_check(base_url: str) -> dict:
     except FirstlookBoundaryError as exc:
         results["robots_txt"] = {"error": str(exc)}
 
-    sitemap_candidates = [
+    sitemap_queue = [
         f"{root}/sitemap.xml",
         f"{root}/sitemap_index.xml",
         f"{root}/sitemap-index.xml",
     ]
-    sitemap_candidates.extend(declared_sitemaps)
+    sitemap_queue.extend(declared_sitemaps)
     rejected_declared = []
     sitemap_fetch_errors = []
-    sitemap_found = False
+    sitemap_documents = []
     sitemap_responses = 0
     sitemap_attempts = 0
     seen = set()
-    for sitemap_url in sitemap_candidates:
+    sitemap_limit_reached = False
+    while sitemap_queue:
+        sitemap_url = sitemap_queue.pop(0)
         try:
             validated = FIRSTLOOK_BOUNDARY.validate_same_host_url(sitemap_url)
         except FirstlookBoundaryError as exc:
@@ -428,6 +612,7 @@ def _firstlook_site_check(base_url: str) -> dict:
             continue
         seen.add(validated.normalized)
         if sitemap_attempts >= FIRSTLOOK_MAX_SITEMAP_DOCUMENTS:
+            sitemap_limit_reached = True
             break
         sitemap_attempts += 1
         try:
@@ -448,22 +633,65 @@ def _firstlook_site_check(base_url: str) -> dict:
             "<urlset" in response.text or "<sitemapindex" in response.text
         ):
             is_index = "<sitemapindex" in response.text
-            results["sitemap"] = {
-                "found": True,
+            locations = [
+                html_unescape(location.strip())
+                for location in re.findall(
+                    r"<loc(?:\s[^>]*)?>(.*?)</loc>",
+                    response.text,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+            ]
+            document = {
                 "url": validated.normalized,
-                "is_index": is_index,
-                "url_count": response.text.count("<loc>"),
-                # Child sitemaps are reported, never fetched in this bounded check.
-                "child_sitemaps": (
-                    re.findall(r"<loc>(.*?)</loc>", response.text)[:10]
-                    if is_index else []
-                ),
-                "redirects_followed": False,
-                "documents_attempted": sitemap_attempts,
+                "type": "index" if is_index else "urlset",
+                "location_count": len(locations),
             }
-            sitemap_found = True
-            break
-    if not sitemap_found:
+            if is_index:
+                document["child_sitemaps"] = locations[:10]
+            sitemap_documents.append(document)
+            if is_index:
+                for location in locations:
+                    try:
+                        child = _firstlook_candidate_url(location, root)
+                    except FirstlookBoundaryError as exc:
+                        rejected_declared.append(
+                            {"url": location, "reason": str(exc)}
+                        )
+                        continue
+                    sitemap_queue.append(child)
+            else:
+                for location in locations:
+                    rejected = _firstlook_add_page_candidate(
+                        page_candidates,
+                        page_candidate_index,
+                        location,
+                        root,
+                        f"sitemap:{validated.normalized}",
+                    )
+                    if rejected and len(rejected_page_candidates) < 20:
+                        rejected_page_candidates.append(rejected)
+            discovered_categories = {
+                candidate["category"] for candidate in page_candidates
+            }
+            if _FIRSTLOOK_CRITICAL_CATEGORIES.issubset(discovered_categories):
+                break
+    if sitemap_documents:
+        primary = sitemap_documents[0]
+        results["sitemap"] = {
+            "found": True,
+            "url": primary["url"],
+            "is_index": primary["type"] == "index",
+            "url_count": sum(
+                document["location_count"]
+                for document in sitemap_documents
+                if document["type"] == "urlset"
+            ),
+            "child_sitemaps": primary.get("child_sitemaps", []),
+            "documents": sitemap_documents,
+            "redirects_followed": False,
+            "documents_attempted": sitemap_attempts,
+        }
+    else:
         results["sitemap"] = {"found": False, "redirects_followed": False}
         if sitemap_fetch_errors and sitemap_responses == 0:
             results["sitemap"]["error"] = (
@@ -474,10 +702,114 @@ def _firstlook_site_check(base_url: str) -> dict:
                 "No same-host sitemap returned HTTP 200 with sitemap XML."
             )
         results["sitemap"]["documents_attempted"] = sitemap_attempts
+    results["sitemap"]["document_limit_reached"] = sitemap_limit_reached
     if sitemap_fetch_errors:
         results["sitemap"]["fetch_errors"] = sitemap_fetch_errors
     if rejected_declared:
         results["sitemap"]["rejected_declared_sitemaps"] = rejected_declared
+
+    selected_pages = _firstlook_select_pages(page_candidates)
+    audited_pages = []
+    page_fetch_errors = []
+    canonical_pages = {}
+    deadline_exhausted = False
+    for candidate in selected_pages:
+        try:
+            response = FIRSTLOOK_BOUNDARY.get(
+                candidate["url"],
+                timeout=_firstlook_request_timeout(deadline, 10),
+                deadline=deadline,
+            )
+        except FirstlookBoundaryError as exc:
+            page_fetch_errors.append(
+                {
+                    "url": candidate["url"],
+                    "category": candidate["category"],
+                    "provenance": candidate["provenance"],
+                    "error": str(exc),
+                }
+            )
+            if time.monotonic() >= deadline:
+                deadline_exhausted = True
+                break
+            continue
+
+        page = {
+            "url": candidate["url"],
+            "category": candidate["category"],
+            "provenance": candidate["provenance"],
+            "status_code": response.status_code,
+            "redirect_not_followed": 300 <= response.status_code < 400,
+        }
+        canonical_url = candidate["url"]
+        if response.status_code == 200:
+            extractor = _FirstlookPageExtractor()
+            extractor.feed(response.text)
+            page["title"] = " ".join(extractor.title.split())
+            page["h1"] = " ".join(extractor.h1.split())
+            if extractor.canonical:
+                try:
+                    canonical_url = _firstlook_candidate_url(
+                        extractor.canonical, root
+                    )
+                except FirstlookBoundaryError as exc:
+                    page["canonical_rejected"] = str(exc)
+        page["canonical_url"] = canonical_url
+        canonical_key = _firstlook_template_key(
+            canonical_url, _firstlook_page_category(canonical_url, root)
+        )
+        if canonical_key in canonical_pages:
+            page["duplicate_of"] = canonical_pages[canonical_key]
+            page["included"] = False
+        else:
+            canonical_pages[canonical_key] = canonical_url
+            page["included"] = True
+        audited_pages.append(page)
+
+    partial_reasons = []
+    if deadline_exhausted:
+        partial_reasons.append("overall deadline reached")
+    if sitemap_limit_reached:
+        partial_reasons.append("sitemap document limit reached")
+    if sitemap_fetch_errors:
+        partial_reasons.append("one or more sitemap documents could not be fetched")
+    if not sitemap_documents:
+        partial_reasons.append("no sitemap document available for page discovery")
+    if page_fetch_errors:
+        partial_reasons.append("one or more selected pages could not be fetched")
+    if len(page_candidates) > len(selected_pages):
+        partial_reasons.append("candidate pages exceeded selection or template limits")
+    discovered_categories = {
+        candidate["category"] for candidate in page_candidates
+    }
+    results["quick_audit"] = {
+        "page_limit": FIRSTLOOK_MAX_PAGES,
+        "pages_selected": len(selected_pages),
+        "pages_fetched": len(audited_pages),
+        "canonical_pages_audited": sum(
+            1 for page in audited_pages if page["included"]
+        ),
+        "selected_pages": audited_pages,
+        "selection": [
+            {
+                "url": candidate["url"],
+                "category": candidate["category"],
+                "provenance": candidate["provenance"],
+            }
+            for candidate in selected_pages
+        ],
+        "fetch_errors": page_fetch_errors,
+        "rejected_candidates": rejected_page_candidates,
+        "categories_discovered": sorted(discovered_categories),
+        "categories_not_discovered": [
+            category
+            for category in _FIRSTLOOK_PAGE_CATEGORIES[:-1]
+            if category not in discovered_categories
+        ],
+        "partial": bool(partial_reasons),
+        "partial_reasons": partial_reasons,
+        "external_links_crawled": False,
+    }
 
     results["https_redirect"] = {
         "skipped": True,
@@ -2099,8 +2431,10 @@ def librecrawl_site_check(url: str) -> dict:
     (http → https), and www/non-www canonicalisation.
 
     In attended Firstlook staging mode, the URL must normalize to the exact
-    hard-coded Firstlook URL. The check uses pinned-IP HTTPS without redirects;
-    HTTP and alternate-host canonicalisation checks are skipped.
+    hard-coded Firstlook URL. The check uses pinned-IP HTTPS without redirects,
+    samples at most 10 prioritized same-host pages from at most 10 sitemap
+    documents, and never follows external links. HTTP and alternate-host
+    canonicalisation checks are skipped.
 
     USE THIS when asked:
     - "check robots.txt", "is the sitemap set up", "quick site health"

@@ -29,6 +29,8 @@ The attended target is fixed in code. The only configuration switch is:
 FIRSTLOOK_STAGING_MODE=true
 ```
 
+The switch accepts only literal `true`, literal `false`, or an unset value.
+
 The only authorized tool URL is
 `https://www.limitlessenterprise.ai/audit`. It has:
 
@@ -64,12 +66,16 @@ Every direct request in the attended path:
 The fixed-host site check may derive `/robots.txt` and the three conventional
 sitemap paths on the same approved host. It has a 30-second overall request
 budget and fetches at most 10 unique same-host sitemap documents, including
-robots declarations. Sitemap-index children are reported but not recursively
-fetched. It does not crawl sitemap page entries or external links. The schema
-check fetches only the exact approved `/audit` page, so the current attended
-lane remains below the 10-page ceiling without adding a page frontier. HTTP
-canonicalization and alternate `www` host checks are intentionally skipped
-because they would cross the staging boundary.
+robots declarations and same-host sitemap-index children. From those documents
+it selects and fetches at most 10 same-host pages. Selection prioritizes the
+homepage, booking, one content page, lead magnet, conversion CTA, service,
+offer, trust, and contact coverage. Query, canonical, and template variants are
+deduplicated; archive and utility paths are skipped. Each returned page records
+its discovery provenance, category, canonical result, and whether it was
+included after deduplication. Coverage is marked partial when a deadline,
+document/page limit, or fetch failure prevents complete bounded coverage.
+External links are never followed. HTTP and alternate-host canonicalization
+checks are intentionally skipped because they would cross the staging boundary.
 
 ## Outbound-path inventory in Firstlook mode
 
@@ -107,8 +113,9 @@ credentials, query/fragment input, exact URL mismatches, and both same-host and
 off-host redirects. It also asserts that rejected inputs never reach the
 connection factory, and successful calls hand only a validated numeric address
 to the transport while preserving Host and TLS SNI. Site-check coverage also
-asserts the 10-document sitemap ceiling, overall deadline propagation, and
-explicit fetch-failure reporting.
+asserts the 10-document sitemap ceiling, prioritized 10-page frontier,
+same-host and utility filtering, query/canonical/template deduplication,
+provenance, deadline propagation, and explicit fetch-failure reporting.
 
 ## Attended rollout
 

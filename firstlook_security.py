@@ -23,8 +23,8 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 FIRSTLOOK_MODE_ENV = "FIRSTLOOK_STAGING_MODE"
 FIRSTLOOK_APPROVED_URL = "https://www.limitlessenterprise.ai/audit"
 
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-_FALSE_VALUES = frozenset({"", "0", "false", "no", "off"})
+_TRUE_VALUES = frozenset({"true"})
+_FALSE_VALUES = frozenset({"", "false"})
 _INTERNAL_HOST_SUFFIXES = (
     ".corp",
     ".home",
@@ -148,13 +148,13 @@ ConnectionFactory = Callable[[str, str, float], http.client.HTTPSConnection]
 
 def parse_firstlook_mode(environ: Mapping[str, str] | None = None) -> bool:
     env = os.environ if environ is None else environ
-    raw = str(env.get(FIRSTLOOK_MODE_ENV, "")).strip().lower()
+    raw = str(env.get(FIRSTLOOK_MODE_ENV, ""))
     if raw in _TRUE_VALUES:
         return True
     if raw in _FALSE_VALUES:
         return False
     raise FirstlookConfigurationError(
-        f"{FIRSTLOOK_MODE_ENV} must be one of: 1, true, yes, on, 0, false, no, off"
+        f"{FIRSTLOOK_MODE_ENV} must be literal true or false, or unset"
     )
 
 

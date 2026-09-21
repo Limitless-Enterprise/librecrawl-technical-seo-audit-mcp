@@ -14,7 +14,7 @@ Everything is configured through environment variables. All are optional — the
 | `REPORTS_DIR` | `~/librecrawl-reports` | Directory where audit zips are written. Docker mounts this to `./reports`. |
 | `LIBRECRAWL_UPSTREAM_DB` | `~/.librecrawl/upstream/users.db` | Path to LibreCrawl's SQLite file, used for orphan-page and cleanup checks. If the file isn't reachable, those specific checks skip gracefully — the core audit is unaffected. |
 | `PAGESPEED_API_KEY` | unset | Google PageSpeed Insights API key. Enables the `librecrawl_pagespeed*` tools and raises PSI rate limits (25k/day). |
-| `FIRSTLOOK_STAGING_MODE` | `false` | Explicitly enables the attended Firstlook fixed-domain boundary. This is not a production mode. Invalid boolean values fail startup. |
+| `FIRSTLOOK_STAGING_MODE` | `false` | Explicitly enables the attended Firstlook fixed-domain boundary. Only literal `true`, literal `false`, or unset are accepted. This is not a production mode. |
 
 ## Attended Firstlook staging mode
 
