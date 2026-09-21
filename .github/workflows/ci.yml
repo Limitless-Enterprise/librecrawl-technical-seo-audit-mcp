@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install runtime dependencies
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        # main still permits MCP 2.x even though server.py uses FastMCP v1.
+        # Keep CI runnable until the pending hardening PR lands its mcp<2 pin.
+        run: python -m pip install "mcp<2" --requirement requirements.txt
+
+      - name: Validate shell syntax
+        run: bash -n install.sh
+
+      - name: Validate Python syntax and imports
+        env:
+          FIRSTLOOK_STAGING_MODE: "true"
+          LIBRECRAWL_STATE_DB: ${{ runner.temp }}/librecrawl-state.db
+          REPORTS_DIR: ${{ runner.temp }}/reports
+        run: |
+          python -m compileall -q .
+          python -c "import content_audit, extended_checks, external_links, libreclient, pdf_report, runner, schema_validator, server, sitemap_fill, state"
+
+      - name: Run test suite
+        env:
+          LIBRECRAWL_STATE_DB: ${{ runner.temp }}/librecrawl-test-state.db
+          REPORTS_DIR: ${{ runner.temp }}/test-reports
+        run: |
+          set +e
+          python -m unittest discover -v
+          test_exit=$?
+          set -e
+
+          # The pre-Firstlook default branch has no tests. Once the security
+          # module lands, an empty suite is an error so those tests cannot
+          # disappear without failing CI.
+          if [[ $test_exit -eq 5 && ! -e firstlook_security.py ]]; then
+            echo "No tests exist on the pre-Firstlook tree."
+            exit 0
+          fi
+          exit "$test_exit"
