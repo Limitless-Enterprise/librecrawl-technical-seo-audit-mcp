@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 from firstlook_security import (
     FirstlookBoundaryError,
     FirstlookFetchError,
+    FirstlookURLRejected,
     load_firstlook_boundary,
 )
 
@@ -431,11 +432,16 @@ def _firstlook_template_key(url: str, category: str) -> str:
     return path
 
 
-def _firstlook_candidate_url(raw_url: str, root: str):
+def _firstlook_candidate_url(raw_url: str, base_url: str):
     assert FIRSTLOOK_BOUNDARY is not None
-    absolute = urljoin(f"{root}/", html_unescape(raw_url.strip()))
-    split = urlsplit(absolute)
-    without_query = urlunsplit((split.scheme, split.netloc, split.path or "/", "", ""))
+    try:
+        absolute = urljoin(base_url, html_unescape(raw_url.strip()))
+        split = urlsplit(absolute)
+        without_query = urlunsplit(
+            (split.scheme, split.netloc, split.path or "/", "", "")
+        )
+    except (TypeError, ValueError) as exc:
+        raise FirstlookURLRejected(f"invalid discovered URL: {exc}") from exc
     return FIRSTLOOK_BOUNDARY.validate_same_host_url(without_query).normalized
 
 
@@ -750,7 +756,7 @@ def _firstlook_site_check(base_url: str) -> dict:
             if extractor.canonical:
                 try:
                     canonical_url = _firstlook_candidate_url(
-                        extractor.canonical, root
+                        extractor.canonical, candidate["url"]
                     )
                 except FirstlookBoundaryError as exc:
                     page["canonical_rejected"] = str(exc)

@@ -241,7 +241,7 @@ class FirstlookServerModeTests(unittest.TestCase):
                         return Response(b"missing", status=404)
                     if self.path == "/critical.xml":
                         urls = (
-                            "https://www.limitlessenterprise.ai/book-call",
+                            "https://www.limitlessenterprise.ai/book-call/",
                             "https://www.limitlessenterprise.ai/blog/growth?utm_source=test",
                             "https://www.limitlessenterprise.ai/blog/growth?ref=duplicate",
                             "https://www.limitlessenterprise.ai/download-checklist",
@@ -252,6 +252,7 @@ class FirstlookServerModeTests(unittest.TestCase):
                             "https://www.limitlessenterprise.ai/contact",
                             "https://www.limitlessenterprise.ai/category/news",
                             "https://attacker.example/escape",
+                            "https://[invalid/",
                         )
                         body = "<urlset>" + "".join(
                             f"<url><loc>{url}</loc></url>" for url in urls
@@ -261,6 +262,11 @@ class FirstlookServerModeTests(unittest.TestCase):
                         return Response(
                             b'<link rel="canonical" href="/services">'
                             b"<title>Service</title><h1>Service</h1>"
+                        )
+                    if self.path == "/book-call/":
+                        return Response(
+                            b'<link rel="canonical" href="./">'
+                            b"<title>Book</title><h1>Book</h1>"
                         )
                     return Response(
                         f"<title>{self.path}</title><h1>{self.path}</h1>".encode()
@@ -283,7 +289,7 @@ class FirstlookServerModeTests(unittest.TestCase):
             ]
             assert len(audited_paths) == 10
             assert "/" in audited_paths
-            assert "/book-call" in audited_paths
+            assert "/book-call/" in audited_paths
             assert "/blog/growth" in audited_paths
             assert audited_paths.count("/blog/growth") == 1
             assert "/download-checklist" in audited_paths
@@ -304,6 +310,14 @@ class FirstlookServerModeTests(unittest.TestCase):
             assert booking["provenance"] == [
                 "sitemap:https://www.limitlessenterprise.ai/critical.xml"
             ]
+            assert booking["canonical_url"] == (
+                "https://www.limitlessenterprise.ai/book-call/"
+            )
+            assert any(
+                candidate["url"] == "https://[invalid/"
+                and "invalid discovered URL" in candidate["reason"]
+                for candidate in quick_audit["rejected_candidates"]
+            )
 
             blocked = (
                 server.librecrawl_audit("https://www.limitlessenterprise.ai/audit"),
