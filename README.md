@@ -443,9 +443,9 @@ All environment variables are optional — the defaults just work. Set them via 
 | `LIBRECRAWL_UPSTREAM_DB` | `~/.librecrawl/upstream/users.db` | LibreCrawl's SQLite, for orphan/cleanup checks (degrades gracefully if absent) |
 | `PAGESPEED_API_KEY` | unset | Optional — enables `librecrawl_pagespeed*` (raises PSI limits) |
 | `FIRSTLOOK_STAGING_MODE` | `false` | Opt-in attended fixed-domain staging boundary; not a production mode |
-| `FIRSTLOOK_APPROVED_URL` | unset | One exact HTTPS URL required by Firstlook mode |
 
-The attended Firstlook mode enables only the fixed-URL site and schema checks;
+The attended Firstlook mode enables site and schema checks only for the
+hard-coded `https://www.limitlessenterprise.ai/audit` target;
 every other MCP tool is disabled. Its threat model and deployment controls are documented in
 [`docs/FIRSTLOOK-STAGING.md`](docs/FIRSTLOOK-STAGING.md).
 

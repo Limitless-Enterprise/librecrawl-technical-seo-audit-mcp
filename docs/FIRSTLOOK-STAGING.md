@@ -23,14 +23,14 @@ The MCP wrapper and LibreCrawl are separate security boundaries:
 
 ## Fail-closed configuration
 
-Both values are required to use the attended path:
+The attended target is fixed in code. The only configuration switch is:
 
 ```sh
 FIRSTLOOK_STAGING_MODE=true
-FIRSTLOOK_APPROVED_URL=https://approved.example/
 ```
 
-`FIRSTLOOK_APPROVED_URL` must have:
+The only authorized tool URL is
+`https://www.limitlessenterprise.ai/audit`. It has:
 
 - HTTPS only;
 - port 443, whether implicit or explicit;
@@ -39,9 +39,9 @@ FIRSTLOOK_APPROVED_URL=https://approved.example/
 - no fragment;
 - a public, non-internal hostname or a public literal IP.
 
-The tool-call URL is normalized and must equal that exact configured URL. It
-is never treated as authority to choose another host or path. Missing or
-invalid configuration stops the MCP process before it can accept calls.
+The tool-call URL is normalized and must equal that exact hard-coded URL. It is
+never treated as authority to choose another host or path, and an environment
+variable cannot override it.
 
 ## Network controls
 
@@ -111,10 +111,10 @@ to the transport while preserving Host and TLS SNI.
 2. Build and review one green commit from the Firstlook boundary PR.
 3. Record the immutable source commit and resulting image digest in the Tower
    integration change record before starting the container.
-4. Configure exactly one approved URL and enable Firstlook mode only in the
-   attended staging service.
-5. Confirm startup rejects missing configuration, then exercise only the site
-   and schema checks with the approved URL.
+4. Enable Firstlook mode only in the attended staging service; confirm the
+   reported approved URL is `https://www.limitlessenterprise.ai/audit`.
+5. Confirm an environment-provided target cannot change the reported approved
+   URL, then exercise only the site and schema checks with that URL.
 6. Confirm every tool except `librecrawl_site_check` and
    `librecrawl_schema_check` returns a Firstlook-disabled response.
 7. Keep an operator present for the sample and retain request/denial logs in
@@ -147,7 +147,7 @@ Suggested change-record entry:
 LibreCrawl MCP commit: <40-char SHA>
 LibreCrawl MCP image: <registry/repository@sha256:digest>
 Tower revision: <revision>
-Approved URL: https://<exact-host>/<exact-path>
+Approved URL: https://www.limitlessenterprise.ai/audit
 FIRSTLOOK_STAGING_MODE: true
 Public automatic audit generation: disabled
 Deployed at/by: <timestamp> / <operator>

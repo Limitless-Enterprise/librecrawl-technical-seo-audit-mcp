@@ -4,6 +4,7 @@ import unittest
 from unittest import mock
 
 from firstlook_security import (
+    FIRSTLOOK_APPROVED_URL,
     FirstlookBoundary,
     FirstlookConfigurationError,
     FirstlookDNSRejected,
@@ -57,9 +58,20 @@ class FirstlookConfigurationTests(unittest.TestCase):
     def test_mode_is_explicit_opt_in(self):
         self.assertEqual(load_firstlook_boundary({}), (False, None))
 
-    def test_enabled_mode_requires_exact_approved_url(self):
-        with self.assertRaises(FirstlookConfigurationError):
-            load_firstlook_boundary({"FIRSTLOOK_STAGING_MODE": "true"})
+    def test_enabled_mode_uses_only_hard_coded_approved_url(self):
+        enabled, boundary = load_firstlook_boundary(
+            {
+                "FIRSTLOOK_STAGING_MODE": "true",
+                "FIRSTLOOK_APPROVED_URL": "https://attacker.example/",
+            }
+        )
+
+        self.assertTrue(enabled)
+        self.assertEqual(boundary.approved_url, FIRSTLOOK_APPROVED_URL)
+        with self.assertRaises(FirstlookURLRejected):
+            boundary.authorize_tool_url("https://limitlessenterprise.ai/audit")
+        with self.assertRaises(FirstlookURLRejected):
+            boundary.authorize_tool_url("https://attacker.example/")
 
     def test_invalid_boolean_fails_closed(self):
         with self.assertRaises(FirstlookConfigurationError):

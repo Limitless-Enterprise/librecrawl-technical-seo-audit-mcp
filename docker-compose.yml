@@ -37,7 +37,6 @@ services:
       - PAGESPEED_API_KEY=${PAGESPEED_API_KEY:-}
       # Explicitly disabled unless an attended staging deployment opts in.
       - FIRSTLOOK_STAGING_MODE=${FIRSTLOOK_STAGING_MODE:-false}
-      - FIRSTLOOK_APPROVED_URL=${FIRSTLOOK_APPROVED_URL:-}
     volumes:
       - ./reports:/reports
       - librecrawl-data:/librecrawl-data:ro

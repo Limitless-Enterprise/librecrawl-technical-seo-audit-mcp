@@ -20,7 +20,7 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
 FIRSTLOOK_MODE_ENV = "FIRSTLOOK_STAGING_MODE"
-FIRSTLOOK_APPROVED_URL_ENV = "FIRSTLOOK_APPROVED_URL"
+FIRSTLOOK_APPROVED_URL = "https://www.limitlessenterprise.ai/audit"
 
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"", "0", "false", "no", "off"})
@@ -318,28 +318,11 @@ class FirstlookBoundary:
         self._connection_factory = connection_factory
         self._max_body_bytes = max_body_bytes
 
-    @classmethod
-    def from_environment(
-        cls, environ: Mapping[str, str] | None = None
-    ) -> "FirstlookBoundary":
-        env = os.environ if environ is None else environ
-        approved_url = str(env.get(FIRSTLOOK_APPROVED_URL_ENV, "")).strip()
-        if not approved_url:
-            raise FirstlookConfigurationError(
-                f"{FIRSTLOOK_APPROVED_URL_ENV} is required when {FIRSTLOOK_MODE_ENV}=true"
-            )
-        try:
-            return cls(approved_url)
-        except FirstlookURLRejected as exc:
-            raise FirstlookConfigurationError(
-                f"invalid {FIRSTLOOK_APPROVED_URL_ENV}: {exc}"
-            ) from exc
-
     def authorize_tool_url(self, submitted_url: str) -> str:
         candidate = validate_https_url(submitted_url)
         if candidate.normalized != self.approved_url:
             raise FirstlookURLRejected(
-                "tool URL does not exactly match the server-configured approved URL"
+                "tool URL does not exactly match the hard-coded approved URL"
             )
         return self.approved_url
 
@@ -438,4 +421,4 @@ def load_firstlook_boundary(
     enabled = parse_firstlook_mode(environ)
     if not enabled:
         return False, None
-    return True, FirstlookBoundary.from_environment(environ)
+    return True, FirstlookBoundary(FIRSTLOOK_APPROVED_URL)

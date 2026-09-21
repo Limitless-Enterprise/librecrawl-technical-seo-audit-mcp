@@ -10,14 +10,17 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+APPROVED_URL = "https://www.limitlessenterprise.ai/audit"
+
+
 class FirstlookServerModeTests(unittest.TestCase):
-    def run_server_script(self, script, *, approved_url="https://audit.example/"):
+    def run_server_script(self, script):
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as temp_dir:
             env = os.environ.copy()
             env.update(
                 {
                     "FIRSTLOOK_STAGING_MODE": "true",
-                    "FIRSTLOOK_APPROVED_URL": approved_url,
+                    "FIRSTLOOK_APPROVED_URL": "https://attacker.example/",
                     "LIBRECRAWL_STATE_DB": str(Path(temp_dir) / "state.db"),
                     "REPORTS_DIR": str(Path(temp_dir) / "reports"),
                 }
@@ -32,7 +35,7 @@ class FirstlookServerModeTests(unittest.TestCase):
                 check=False,
             )
 
-    def test_server_startup_fails_closed_without_approved_url(self):
+    def test_server_startup_uses_hard_coded_approved_url(self):
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as temp_dir:
             env = os.environ.copy()
             env.pop("FIRSTLOOK_APPROVED_URL", None)
@@ -43,7 +46,14 @@ class FirstlookServerModeTests(unittest.TestCase):
                 }
             )
             result = subprocess.run(
-                [sys.executable, "-c", "import server"],
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import server; "
+                        f"assert server.FIRSTLOOK_BOUNDARY.approved_url == {APPROVED_URL!r}"
+                    ),
+                ],
                 cwd=REPO_ROOT,
                 env=env,
                 text=True,
@@ -52,8 +62,7 @@ class FirstlookServerModeTests(unittest.TestCase):
                 check=False,
             )
 
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("FIRSTLOOK_APPROVED_URL is required", result.stderr)
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
 
     def test_general_mode_remains_the_default(self):
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as temp_dir:
@@ -96,11 +105,12 @@ class FirstlookServerModeTests(unittest.TestCase):
 
             PUBLIC_IP = "93.184.216.34"
             attempts = []
+            audit_status = {"value": 200}
 
             class Response:
-                status = 200
-                def __init__(self, body):
+                def __init__(self, body, status=200):
                     self.body = body
+                    self.status = status
                 def read(self, _limit):
                     return self.body
                 def getheaders(self):
@@ -117,9 +127,11 @@ class FirstlookServerModeTests(unittest.TestCase):
                     attempts.append((self.host, self.ip, method, path, headers["Host"]))
                 def getresponse(self):
                     if self.path == "/robots.txt":
-                        return Response(b"User-agent: *\nSitemap: https://audit.example/sitemap.xml")
+                        return Response(b"User-agent: *\nSitemap: https://www.limitlessenterprise.ai/sitemap.xml")
                     if self.path == "/sitemap.xml":
-                        return Response(b"<urlset><url><loc>https://audit.example/</loc></url></urlset>")
+                        return Response(b"<urlset><url><loc>https://www.limitlessenterprise.ai/audit</loc></url></urlset>")
+                    if self.path == "/audit" and audit_status["value"] != 200:
+                        return Response(b"", status=audit_status["value"])
                     return Response(
                         b'<script type="application/ld+json">'
                         b'{"@type":"Organization","name":"Tower"}'
@@ -129,7 +141,7 @@ class FirstlookServerModeTests(unittest.TestCase):
                     pass
 
             server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
-                "https://audit.example/",
+                "https://www.limitlessenterprise.ai/audit",
                 resolver=lambda _host, _port: (PUBLIC_IP,),
                 connection_factory=Connection,
             )
@@ -143,24 +155,33 @@ class FirstlookServerModeTests(unittest.TestCase):
             assert server._runner._runner_thread is None
 
             assert server.librecrawl_site_check("https://off-host.example/")["success"] is False
-            assert server.librecrawl_schema_check("https://audit.example/?visitor=url")["success"] is False
+            assert server.librecrawl_schema_check("https://www.limitlessenterprise.ai/audit?visitor=url")["success"] is False
+            assert server.librecrawl_site_check("https://limitlessenterprise.ai/audit")["success"] is False
             assert attempts == []
 
-            site = server.librecrawl_site_check("https://audit.example/")
+            site = server.librecrawl_site_check("https://www.limitlessenterprise.ai/audit")
             assert site["robots_txt"]["found"] is True
             assert site["sitemap"]["found"] is True
             assert site["https_redirect"]["skipped"] is True
             assert site["www_redirect"]["skipped"] is True
 
-            schema = server.librecrawl_schema_check("https://audit.example/")
+            schema = server.librecrawl_schema_check("https://www.limitlessenterprise.ai/audit")
             assert schema["types_found"] == ["Organization"]
             assert all(attempt[1] == PUBLIC_IP for attempt in attempts)
-            assert all(attempt[4] == "audit.example" for attempt in attempts)
+            assert all(attempt[4] == "www.limitlessenterprise.ai" for attempt in attempts)
+
+            audit_status["value"] = 302
+            failed_schema = server.librecrawl_schema_check(
+                "https://www.limitlessenterprise.ai/audit"
+            )
+            assert failed_schema["success"] is False
+            assert "HTTP 302" in failed_schema["error"]
+            assert "schema_count" not in failed_schema
 
             blocked = (
-                server.librecrawl_audit("https://audit.example/"),
+                server.librecrawl_audit("https://www.limitlessenterprise.ai/audit"),
                 server.librecrawl_generate_report(),
-                server.librecrawl_start_crawl("https://audit.example/"),
+                server.librecrawl_start_crawl("https://www.limitlessenterprise.ai/audit"),
                 server.librecrawl_get_status(),
                 server.librecrawl_export_results(),
                 server.librecrawl_list_crawls(),
@@ -172,20 +193,20 @@ class FirstlookServerModeTests(unittest.TestCase):
                 server.librecrawl_filter_issues([]),
                 server.librecrawl_visualization_data(),
                 server.librecrawl_internal_links_analysis(),
-                server.librecrawl_start_chunked_audit("https://audit.example/"),
+                server.librecrawl_start_chunked_audit("https://www.limitlessenterprise.ai/audit"),
                 server.librecrawl_audit_status("session"),
                 server.librecrawl_audit_artifacts("session"),
                 server.librecrawl_audit_pause("session"),
                 server.librecrawl_audit_resume("session"),
                 server.librecrawl_audit_cancel("session"),
                 server.librecrawl_audit_force_advance("session"),
-                server.librecrawl_full_audit_strict("https://audit.example/"),
+                server.librecrawl_full_audit_strict("https://www.limitlessenterprise.ai/audit"),
                 server.librecrawl_report_content("missing.md"),
                 server.librecrawl_audit_pdf("missing.md"),
-                server.librecrawl_pagespeed("https://audit.example/"),
-                server.librecrawl_pagespeed_audit(["https://audit.example/"]),
+                server.librecrawl_pagespeed("https://www.limitlessenterprise.ai/audit"),
+                server.librecrawl_pagespeed_audit(["https://www.limitlessenterprise.ai/audit"]),
                 server.librecrawl_pagespeed_audit_all_crawl_pages(1),
-                server.librecrawl_schema_audit(["https://audit.example/"]),
+                server.librecrawl_schema_audit(["https://www.limitlessenterprise.ai/audit"]),
                 server.librecrawl_schema_validate(1),
                 server.librecrawl_external_links_audit(1),
                 server.librecrawl_append_gsc_section("missing.md", {}),

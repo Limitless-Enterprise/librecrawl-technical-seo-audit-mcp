@@ -103,9 +103,10 @@ FIRSTLOOK_MCP_INSTRUCTIONS = """\
 You are connected to the attended Firstlook staging boundary. This mode is an
 explicit fixed-domain exception, not a general website-audit service.
 
-Only librecrawl_site_check and librecrawl_schema_check may fetch the approved
-site. Their URL argument must normalize to the exact server-configured URL; it
-does not select a destination. Requests use HTTPS on port 443, reject
+Only librecrawl_site_check and librecrawl_schema_check may fetch
+https://www.limitlessenterprise.ai/audit. Their URL argument must normalize to
+that exact URL; it does not select a destination. Requests use HTTPS on port
+443, reject
 credentials/query/fragment, do not follow redirects, reject any non-public DNS
 answer, and connect to a validated numeric address with normal TLS hostname and
 certificate verification.
@@ -2055,7 +2056,7 @@ def librecrawl_site_check(url: str) -> dict:
     (http → https), and www/non-www canonicalisation.
 
     In attended Firstlook staging mode, the URL must normalize to the exact
-    server-approved URL. The check uses pinned-IP HTTPS without redirects;
+    hard-coded Firstlook URL. The check uses pinned-IP HTTPS without redirects;
     HTTP and alternate-host canonicalisation checks are skipped.
 
     USE THIS when asked:
@@ -2769,7 +2770,7 @@ def librecrawl_schema_check(url: str) -> dict:
     and which high-value schema types are missing.
 
     In attended Firstlook staging mode, the URL must normalize to the exact
-    server-approved URL and is fetched through pinned-IP HTTPS without
+    hard-coded Firstlook URL and is fetched through pinned-IP HTTPS without
     redirects.
 
     USE THIS when asked:
@@ -2786,6 +2787,15 @@ def librecrawl_schema_check(url: str) -> dict:
         except FirstlookBoundaryError as exc:
             return _firstlook_denied(exc)
     schemas = _extract_schema(url)
+    if FIRSTLOOK_STAGING_MODE:
+        fetch_errors = [schema["error"] for schema in schemas if "error" in schema]
+        if fetch_errors:
+            return {
+                "success": False,
+                "error": f"Schema fetch failed: {fetch_errors[0]}",
+                "url": url,
+                "firstlook_staging_mode": True,
+            }
     found_types = [s.get("type") for s in schemas if "type" in s]
     return {
         "url": url,

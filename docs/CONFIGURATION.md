@@ -15,22 +15,20 @@ Everything is configured through environment variables. All are optional — the
 | `LIBRECRAWL_UPSTREAM_DB` | `~/.librecrawl/upstream/users.db` | Path to LibreCrawl's SQLite file, used for orphan-page and cleanup checks. If the file isn't reachable, those specific checks skip gracefully — the core audit is unaffected. |
 | `PAGESPEED_API_KEY` | unset | Google PageSpeed Insights API key. Enables the `librecrawl_pagespeed*` tools and raises PSI rate limits (25k/day). |
 | `FIRSTLOOK_STAGING_MODE` | `false` | Explicitly enables the attended Firstlook fixed-domain boundary. This is not a production mode. Invalid boolean values fail startup. |
-| `FIRSTLOOK_APPROVED_URL` | unset | The one exact URL authorized when `FIRSTLOOK_STAGING_MODE=true`. Required in that mode; must be HTTPS on port 443 with no credentials, query, or fragment. |
 
 ## Attended Firstlook staging mode
 
 This opt-in mode is a bounded staging exception, not a hardened public audit
-service. It fails startup unless one exact approved URL is configured:
+service. It has one hard-coded target:
 
 ```sh
-FIRSTLOOK_STAGING_MODE=true \
-FIRSTLOOK_APPROVED_URL=https://approved.example/ \
-python server.py
+FIRSTLOOK_STAGING_MODE=true python server.py
 ```
 
 Only `librecrawl_site_check` and `librecrawl_schema_check` may fetch the
 approved host. Their URL arguments are checked for exact normalized equality
-with `FIRSTLOOK_APPROVED_URL`; the submitted value never selects a destination.
+with `https://www.limitlessenterprise.ai/audit`; the submitted value never
+selects a destination and no environment variable can replace the target.
 Every other MCP tool is disabled in this mode, including full crawls,
 background-runner recovery, PageSpeed, batch schema checks, stored results,
 maintenance controls, external-link validation, and PDF rendering.
@@ -88,7 +86,6 @@ environment:
   - LIBRECRAWL_UPSTREAM_DB=/librecrawl-data/users.db
   - PAGESPEED_API_KEY=${PAGESPEED_API_KEY:-}
   - FIRSTLOOK_STAGING_MODE=${FIRSTLOOK_STAGING_MODE:-false}
-  - FIRSTLOOK_APPROVED_URL=${FIRSTLOOK_APPROVED_URL:-}
 ```
 
 Pass a PageSpeed key by putting `PAGESPEED_API_KEY=...` in a `.env` file next to `docker-compose.yml` (copy `.env.example`). The MCP port is published on loopback only (`127.0.0.1:5081`); change the port mapping in `docker-compose.yml` to expose it elsewhere.
