@@ -19,6 +19,7 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 from firstlook_security import (
     FirstlookBoundaryError,
+    FirstlookFetchError,
     load_firstlook_boundary,
 )
 
@@ -325,10 +326,22 @@ def _ensure_crawler_ready() -> dict:
 
 # ── Site-level checks (robots, sitemap, HTTPS, www) ──────────────────────────
 
+FIRSTLOOK_SITE_CHECK_SECONDS = 30.0
+FIRSTLOOK_MAX_SITEMAP_DOCUMENTS = 10
+
+
+def _firstlook_request_timeout(deadline: float, maximum: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise FirstlookFetchError("site-check deadline exceeded")
+    return min(maximum, remaining)
+
+
 def _firstlook_site_check(base_url: str) -> dict:
     """Run the bounded check without HTTP, alternate hosts, or redirects."""
     assert FIRSTLOOK_BOUNDARY is not None
     approved_url = FIRSTLOOK_BOUNDARY.authorize_tool_url(base_url)
+    deadline = time.monotonic() + FIRSTLOOK_SITE_CHECK_SECONDS
     approved = urlparse(approved_url)
     root = f"https://{approved.netloc}"
     results = {
@@ -342,7 +355,11 @@ def _firstlook_site_check(base_url: str) -> dict:
     declared_sitemaps = []
     robots_url = f"{root}/robots.txt"
     try:
-        response = FIRSTLOOK_BOUNDARY.get(robots_url, timeout=10)
+        response = FIRSTLOOK_BOUNDARY.get(
+            robots_url,
+            timeout=_firstlook_request_timeout(deadline, 10),
+            deadline=deadline,
+        )
         if response.status_code == 200:
             text = response.text
             lines = text.splitlines()
@@ -352,11 +369,12 @@ def _firstlook_site_check(base_url: str) -> dict:
                 if line.lower().startswith("disallow:")
                 and line.split(":", 1)[1].strip()
             ]
-            declared_sitemaps = [
+            all_declared_sitemaps = [
                 line.split(":", 1)[1].strip()
                 for line in lines
                 if line.lower().startswith("sitemap:")
             ]
+            declared_sitemaps = all_declared_sitemaps[:FIRSTLOOK_MAX_SITEMAP_DOCUMENTS]
             crawl_delay = next(
                 (
                     line.split(":", 1)[1].strip()
@@ -374,6 +392,7 @@ def _firstlook_site_check(base_url: str) -> dict:
                     if item in ("/", "/wp-admin", "/wp-login.php")
                 ],
                 "sitemap_declared": declared_sitemaps,
+                "sitemap_declared_count": len(all_declared_sitemaps),
                 "crawl_delay": crawl_delay,
                 "raw_preview": text[:500],
             }
@@ -394,7 +413,10 @@ def _firstlook_site_check(base_url: str) -> dict:
     ]
     sitemap_candidates.extend(declared_sitemaps)
     rejected_declared = []
+    sitemap_fetch_errors = []
     sitemap_found = False
+    sitemap_responses = 0
+    sitemap_attempts = 0
     seen = set()
     for sitemap_url in sitemap_candidates:
         try:
@@ -405,9 +427,22 @@ def _firstlook_site_check(base_url: str) -> dict:
         if validated.normalized in seen:
             continue
         seen.add(validated.normalized)
+        if sitemap_attempts >= FIRSTLOOK_MAX_SITEMAP_DOCUMENTS:
+            break
+        sitemap_attempts += 1
         try:
-            response = FIRSTLOOK_BOUNDARY.get(validated.normalized, timeout=15)
-        except FirstlookBoundaryError:
+            response = FIRSTLOOK_BOUNDARY.get(
+                validated.normalized,
+                timeout=_firstlook_request_timeout(deadline, 15),
+                deadline=deadline,
+            )
+            sitemap_responses += 1
+        except FirstlookBoundaryError as exc:
+            sitemap_fetch_errors.append(
+                {"url": validated.normalized, "error": str(exc)}
+            )
+            if time.monotonic() >= deadline:
+                break
             continue
         if response.status_code == 200 and (
             "<urlset" in response.text or "<sitemapindex" in response.text
@@ -424,15 +459,23 @@ def _firstlook_site_check(base_url: str) -> dict:
                     if is_index else []
                 ),
                 "redirects_followed": False,
+                "documents_attempted": sitemap_attempts,
             }
             sitemap_found = True
             break
     if not sitemap_found:
-        results["sitemap"] = {
-            "found": False,
-            "warning": "No same-host sitemap returned HTTP 200 with sitemap XML.",
-            "redirects_followed": False,
-        }
+        results["sitemap"] = {"found": False, "redirects_followed": False}
+        if sitemap_fetch_errors and sitemap_responses == 0:
+            results["sitemap"]["error"] = (
+                "No sitemap candidate could be fetched through the Firstlook boundary."
+            )
+        else:
+            results["sitemap"]["warning"] = (
+                "No same-host sitemap returned HTTP 200 with sitemap XML."
+            )
+        results["sitemap"]["documents_attempted"] = sitemap_attempts
+    if sitemap_fetch_errors:
+        results["sitemap"]["fetch_errors"] = sitemap_fetch_errors
     if rejected_declared:
         results["sitemap"]["rejected_declared_sitemaps"] = rejected_declared
 

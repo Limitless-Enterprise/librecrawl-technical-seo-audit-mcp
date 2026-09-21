@@ -8,6 +8,7 @@ from firstlook_security import (
     FirstlookBoundary,
     FirstlookConfigurationError,
     FirstlookDNSRejected,
+    FirstlookFetchError,
     FirstlookURLRejected,
     PinnedHTTPSConnection,
     load_firstlook_boundary,
@@ -229,6 +230,28 @@ class PinnedTransportTests(unittest.TestCase):
 
         self.assertEqual(len(resolutions), 1)
         self.assertEqual(attempts[0][1], PUBLIC_V4)
+
+    def test_deadline_limits_connection_timeout_and_stops_expired_request(self):
+        attempts = []
+
+        def connection_factory(hostname, pinned_ip, timeout):
+            attempts.append((hostname, pinned_ip, timeout))
+            return FakeConnection(FakeHTTPResponse())
+
+        boundary = FirstlookBoundary(
+            "https://audit.example/",
+            resolver=lambda _host, _port: (PUBLIC_V4,),
+            connection_factory=connection_factory,
+        )
+        with mock.patch("firstlook_security.time.monotonic", return_value=103):
+            boundary.get("https://audit.example/", timeout=15, deadline=105)
+
+        self.assertEqual(attempts[0][2], 2)
+
+        with mock.patch("firstlook_security.time.monotonic", return_value=106):
+            with self.assertRaisesRegex(FirstlookFetchError, "deadline exceeded"):
+                boundary.get("https://audit.example/", deadline=105)
+        self.assertEqual(len(attempts), 1)
 
     def test_rejected_input_and_dns_answers_make_no_outbound_request(self):
         attempts = []

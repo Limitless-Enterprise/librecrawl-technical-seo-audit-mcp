@@ -51,6 +51,20 @@ class InstallerTests(unittest.TestCase):
             self._write_stub(binary_directory / "sleep", "exit 0")
             self._write_stub(binary_directory / "uvx", "exit 0")
             self._write_stub(
+                binary_directory / "sudo",
+                """
+                printf 'sudo %s\\n' "$*" >> "$INSTALLER_TEST_LOG"
+                exit 0
+                """,
+            )
+            self._write_stub(
+                binary_directory / "apt-get",
+                """
+                printf 'apt-get %s\\n' "$*" >> "$INSTALLER_TEST_LOG"
+                exit 0
+                """,
+            )
+            self._write_stub(
                 binary_directory / "curl",
                 """
                 printf 'curl %s\\n' "$*" >> "$INSTALLER_TEST_LOG"
@@ -93,6 +107,8 @@ class InstallerTests(unittest.TestCase):
                 (install_directory / "mcp-server" / "firstlook_security.py").is_file()
             )
             self.assertIn("pip install --quiet mcp>=1.0.0,<2", command_log)
+            self.assertIn("sudo apt-get install", command_log)
+            self.assertNotIn("\napt-get ", command_log)
 
     def _write_stub(self, path, body):
         path.write_text(

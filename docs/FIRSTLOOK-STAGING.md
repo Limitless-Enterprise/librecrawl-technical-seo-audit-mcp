@@ -62,11 +62,14 @@ Every direct request in the attended path:
 8. caps response bodies at 5 MiB.
 
 The fixed-host site check may derive `/robots.txt` and the three conventional
-sitemap paths on the same approved host. A sitemap URL declared by robots.txt
-is fetched only when it passes the same-host policy. Sitemap-index children are
-reported but not recursively fetched. HTTP canonicalization and alternate
-`www` host checks are intentionally skipped because they would cross the
-staging boundary.
+sitemap paths on the same approved host. It has a 30-second overall request
+budget and fetches at most 10 unique same-host sitemap documents, including
+robots declarations. Sitemap-index children are reported but not recursively
+fetched. It does not crawl sitemap page entries or external links. The schema
+check fetches only the exact approved `/audit` page, so the current attended
+lane remains below the 10-page ceiling without adding a page frontier. HTTP
+canonicalization and alternate `www` host checks are intentionally skipped
+because they would cross the staging boundary.
 
 ## Outbound-path inventory in Firstlook mode
 
@@ -103,7 +106,9 @@ mixed public/private answers, rebinding, internal names, non-443 ports,
 credentials, query/fragment input, exact URL mismatches, and both same-host and
 off-host redirects. It also asserts that rejected inputs never reach the
 connection factory, and successful calls hand only a validated numeric address
-to the transport while preserving Host and TLS SNI.
+to the transport while preserving Host and TLS SNI. Site-check coverage also
+asserts the 10-document sitemap ceiling, overall deadline propagation, and
+explicit fetch-failure reporting.
 
 ## Attended rollout
 

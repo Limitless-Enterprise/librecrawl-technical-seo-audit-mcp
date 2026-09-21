@@ -15,6 +15,7 @@ import ipaddress
 import os
 import socket
 import ssl
+import time
 from typing import Callable, Mapping, Sequence
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -339,6 +340,7 @@ class FirstlookBoundary:
         url: str,
         *,
         timeout: float = 15.0,
+        deadline: float | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> PinnedResponse:
         """GET one same-host URL without redirect handling or a second DNS lookup."""
@@ -382,8 +384,14 @@ class FirstlookBoundary:
 
         failures: list[str] = []
         for pinned_ip in validated_addresses:
+            attempt_timeout = timeout
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise FirstlookFetchError("request deadline exceeded")
+                attempt_timeout = min(timeout, remaining)
             connection = self._connection_factory(
-                target.hostname, pinned_ip, timeout
+                target.hostname, pinned_ip, attempt_timeout
             )
             try:
                 connection.request("GET", target.path, headers=request_headers)

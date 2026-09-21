@@ -124,7 +124,9 @@ class FirstlookServerModeTests(unittest.TestCase):
                     self.path = None
                 def request(self, method, path, headers):
                     self.path = path
-                    attempts.append((self.host, self.ip, method, path, headers["Host"]))
+                    attempts.append(
+                        (self.host, self.ip, method, path, headers["Host"], self.timeout)
+                    )
                 def getresponse(self):
                     if self.path == "/robots.txt":
                         return Response(b"User-agent: *\nSitemap: https://www.limitlessenterprise.ai/sitemap.xml")
@@ -169,6 +171,7 @@ class FirstlookServerModeTests(unittest.TestCase):
             assert schema["types_found"] == ["Organization"]
             assert all(attempt[1] == PUBLIC_IP for attempt in attempts)
             assert all(attempt[4] == "www.limitlessenterprise.ai" for attempt in attempts)
+            assert all(0 < attempt[5] <= 30 for attempt in attempts)
 
             audit_status["value"] = 302
             failed_schema = server.librecrawl_schema_check(
@@ -177,6 +180,50 @@ class FirstlookServerModeTests(unittest.TestCase):
             assert failed_schema["success"] is False
             assert "HTTP 302" in failed_schema["error"]
             assert "schema_count" not in failed_schema
+
+            class FailingConnection(Connection):
+                def getresponse(self):
+                    raise OSError("network unavailable")
+
+            attempts.clear()
+            server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
+                "https://www.limitlessenterprise.ai/audit",
+                resolver=lambda _host, _port: (PUBLIC_IP,),
+                connection_factory=FailingConnection,
+            )
+            failed_site = server.librecrawl_site_check(
+                "https://www.limitlessenterprise.ai/audit"
+            )
+            assert failed_site["sitemap"]["found"] is False
+            assert "error" in failed_site["sitemap"]
+            assert len(failed_site["sitemap"]["fetch_errors"]) == 3
+
+            class CappedConnection(Connection):
+                def getresponse(self):
+                    if self.path == "/robots.txt":
+                        declarations = "\n".join(
+                            f"Sitemap: https://www.limitlessenterprise.ai/map-{index}.xml"
+                            for index in range(50)
+                        )
+                        return Response(declarations.encode())
+                    return Response(b"not a sitemap", status=404)
+
+            attempts.clear()
+            server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
+                "https://www.limitlessenterprise.ai/audit",
+                resolver=lambda _host, _port: (PUBLIC_IP,),
+                connection_factory=CappedConnection,
+            )
+            capped_site = server.librecrawl_site_check(
+                "https://www.limitlessenterprise.ai/audit"
+            )
+            sitemap_attempts = [
+                attempt for attempt in attempts if attempt[3] != "/robots.txt"
+            ]
+            assert len(sitemap_attempts) == 10
+            assert capped_site["sitemap"]["documents_attempted"] == 10
+            assert capped_site["robots_txt"]["sitemap_declared_count"] == 50
+            assert len(capped_site["robots_txt"]["sitemap_declared"]) == 10
 
             blocked = (
                 server.librecrawl_audit("https://www.limitlessenterprise.ai/audit"),
