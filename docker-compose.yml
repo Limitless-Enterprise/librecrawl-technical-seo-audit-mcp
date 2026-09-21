@@ -35,6 +35,8 @@ services:
       - REPORTS_DIR=/reports
       - LIBRECRAWL_UPSTREAM_DB=/librecrawl-data/users.db
       - PAGESPEED_API_KEY=${PAGESPEED_API_KEY:-}
+      # Explicitly disabled unless an attended staging deployment opts in.
+      - FIRSTLOOK_STAGING_MODE=${FIRSTLOOK_STAGING_MODE:-false}
     volumes:
       - ./reports:/reports
       - librecrawl-data:/librecrawl-data:ro

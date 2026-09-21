@@ -203,18 +203,18 @@ info "Step 4/5 — Installing LibreCrawl MCP server (v2.0.3 — 37 tools)..."
 MCP_DIR="${INSTALL_DIR}/mcp-server"
 mkdir -p "${MCP_DIR}"
 
-# Download all 10 Python modules that make up the v2.0.3 MCP wrapper.
+# Download all 11 Python modules that make up the v2.0.3 MCP wrapper.
 # server.py is the FastMCP entrypoint; the others are imported by it.
 # Server-side instructions + ephemeral mode + 37 tools all need these files.
-info "Downloading MCP server modules from GitHub (10 files)..."
+info "Downloading MCP server modules from GitHub (11 files)..."
 BASE_URL="https://raw.githubusercontent.com/adityaarsharma/librecrawl-technical-seo-audit-mcp/main"
-for f in server.py state.py libreclient.py runner.py external_links.py \
+for f in server.py firstlook_security.py state.py libreclient.py runner.py external_links.py \
          content_audit.py extended_checks.py schema_validator.py \
          sitemap_fill.py pdf_report.py; do
   curl -fsSL "${BASE_URL}/${f}" -o "${MCP_DIR}/${f}" \
        || err "Failed to download ${f} from GitHub"
 done
-log "10 Python modules downloaded"
+log "11 Python modules downloaded"
 
 # Optional: drop the Claude Code skill into ~/.claude/skills/ for clients
 # that pick it up (Claude Code does — server-side `instructions` covers
@@ -235,7 +235,7 @@ python3 -m venv "${MCP_DIR}/venv"
 #   mcp + httpx + uvicorn — FastMCP server runtime
 #   weasyprint + markdown — PDF rendering pipeline (.pdf sidecar)
 "${MCP_DIR}/venv/bin/pip" install --quiet \
-    "mcp>=1.0.0" httpx uvicorn weasyprint markdown
+    "mcp>=1.0.0,<2" httpx uvicorn weasyprint markdown
 
 # WeasyPrint needs Pango/Cairo system libraries to render PDFs. We install
 # them via apt non-interactively. If the user is not on Debian/Ubuntu OR

@@ -4,6 +4,12 @@ The server exposes **37 MCP tools**. In normal use you never call these by hand 
 
 > Each tool's exact input schema is advertised over MCP (your client can list it). Signatures below show the arguments you'll actually reach for; optional/advanced parameters are summarized in prose.
 
+> **Attended Firstlook staging mode:** only `librecrawl_site_check` and
+> `librecrawl_schema_check` are callable, and their URL must exactly match the
+> hard-coded `https://www.limitlessenterprise.ai/audit` URL. Every other tool
+> below returns a disabled
+> response. See [FIRSTLOOK-STAGING.md](FIRSTLOOK-STAGING.md).
+
 ## Chunked audit — the 95% path
 
 This is the modern flow: start → poll → zip. It never times out and survives client/process restarts.

@@ -13,10 +13,22 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
+from html import unescape as html_unescape
 from html.parser import HTMLParser
-from urllib.parse import urlparse, unquote
+from urllib.parse import urljoin, urlparse, urlsplit, urlunsplit, unquote
 import httpx
 from mcp.server.fastmcp import FastMCP
+from firstlook_security import (
+    FirstlookBoundaryError,
+    FirstlookFetchError,
+    FirstlookURLRejected,
+    load_firstlook_boundary,
+)
+
+
+# Explicit opt-in.  Invalid or incomplete staging configuration raises during
+# process startup, before FastMCP can accept a tool call.
+FIRSTLOOK_STAGING_MODE, FIRSTLOOK_BOUNDARY = load_firstlook_boundary()
 
 # v2.0.3 — server instructions are surfaced to the LLM at connection time by
 # every MCP-compatible client. This means the rules below apply even when the
@@ -90,13 +102,61 @@ Contents: PDF report + 7 CSVs.
 Server forgot the session — nothing remote.
 """
 
-mcp = FastMCP("librecrawl-mcp", instructions=LIBRECRAWL_MCP_INSTRUCTIONS)
+FIRSTLOOK_MCP_INSTRUCTIONS = """\
+You are connected to the attended Firstlook staging boundary. This mode is an
+explicit fixed-domain exception, not a general website-audit service.
+
+Only librecrawl_site_check and librecrawl_schema_check may fetch
+https://www.limitlessenterprise.ai/audit. Their URL argument must normalize to
+that exact URL; it does not select a destination. Requests use HTTPS on port
+443, reject
+credentials/query/fragment, do not follow redirects, reject any non-public DNS
+answer, and connect to a validated numeric address with normal TLS hostname and
+certificate verification.
+
+Every other MCP tool is disabled in this mode, including full crawls,
+PageSpeed, batch schema, external-link checks, stored results, maintenance,
+and report rendering. Production and public visitor-submitted audit generation
+remain disabled pending hardening of the website fetcher, render worker, MCP
+tools, and underlying LibreCrawl engine.
+"""
+
+mcp = FastMCP(
+    "librecrawl-mcp",
+    instructions=(
+        FIRSTLOOK_MCP_INSTRUCTIONS
+        if FIRSTLOOK_STAGING_MODE
+        else LIBRECRAWL_MCP_INSTRUCTIONS
+    ),
+)
 
 BASE            = os.getenv("LIBRECRAWL_URL", f"http://127.0.0.1:{os.getenv('LIBRECRAWL_PORT', '5080')}")
 MCP_PORT        = int(os.getenv('MCP_PORT', '5081'))
 REPORTS_DIR     = Path(os.getenv('REPORTS_DIR', Path.home() / 'librecrawl-reports'))
 PSI_API_KEY     = os.getenv('PAGESPEED_API_KEY', '')   # Google PageSpeed Insights
 PSI_API_BASE    = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+
+
+def _firstlook_disabled(capability: str) -> dict | None:
+    """Return a stable denial in staging mode, otherwise let the caller run."""
+    if not FIRSTLOOK_STAGING_MODE:
+        return None
+    return {
+        "success": False,
+        "error": (
+            f"{capability} is disabled in Firstlook staging mode. "
+            "Only the fixed-URL site and schema checks are enabled."
+        ),
+        "firstlook_staging_mode": True,
+    }
+
+
+def _firstlook_denied(exc: Exception) -> dict:
+    return {
+        "success": False,
+        "error": f"Firstlook staging boundary denied the request: {exc}",
+        "firstlook_staging_mode": True,
+    }
 
 # Fields we request on every export
 # LibreCrawl exposes all of these from its seo_extractor — we request the full set
@@ -268,8 +328,514 @@ def _ensure_crawler_ready() -> dict:
 
 # ── Site-level checks (robots, sitemap, HTTPS, www) ──────────────────────────
 
+FIRSTLOOK_SITE_CHECK_SECONDS = 30.0
+FIRSTLOOK_MAX_SITEMAP_DOCUMENTS = 10
+FIRSTLOOK_MAX_PAGES = 10
+_FIRSTLOOK_PAGE_CATEGORIES = (
+    "homepage",
+    "booking",
+    "content",
+    "lead_magnet",
+    "conversion_cta",
+    "service",
+    "offer",
+    "trust",
+    "contact",
+    "other",
+)
+_FIRSTLOOK_CRITICAL_CATEGORIES = frozenset(_FIRSTLOOK_PAGE_CATEGORIES[1:-1])
+_FIRSTLOOK_UTILITY_PATH = re.compile(
+    r"/(?:tag|category|author|archive|feed|search|wp-admin|wp-login|cart|"
+    r"checkout|account|login|privacy|terms|cookies?|thank-you|404)(?:/|$)|"
+    r"/page/\d+(?:/|$)",
+    re.IGNORECASE,
+)
+
+
+class _FirstlookPageExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.canonical = None
+        self.title = ""
+        self.h1 = ""
+        self._capture = None
+
+    def handle_starttag(self, tag, attrs):
+        attributes = {key.lower(): value for key, value in attrs}
+        lowered = tag.lower()
+        if lowered == "link" and "canonical" in (
+            attributes.get("rel") or ""
+        ).lower().split():
+            self.canonical = attributes.get("href")
+        elif lowered in ("title", "h1"):
+            self._capture = lowered
+
+    def handle_endtag(self, tag):
+        if tag.lower() == self._capture:
+            self._capture = None
+
+    def handle_data(self, data):
+        if self._capture == "title":
+            self.title += data
+        elif self._capture == "h1":
+            self.h1 += data
+
+
+def _firstlook_page_category(url: str, root: str) -> str:
+    path = unquote(urlsplit(url).path).lower().rstrip("/") or "/"
+    if url == root or path == "/":
+        return "homepage"
+    if re.search(r"/(?:book|booking|schedule|appointment)(?:/|$|-)", path):
+        return "booking"
+    if re.search(
+        r"/(?:blog|article|articles|resource|resources|guide|guides|insight|"
+        r"insights|news)(?:/|$|-)",
+        path,
+    ):
+        return "content"
+    if re.search(
+        r"/(?:download|ebook|checklist|template|toolkit|lead-magnet|free)"
+        r"(?:/|$|-)",
+        path,
+    ):
+        return "lead_magnet"
+    if re.search(
+        r"/(?:audit|consult|consultation|demo|get-started|start|quote|apply)"
+        r"(?:/|$|-)",
+        path,
+    ):
+        return "conversion_cta"
+    if re.search(r"/(?:service|services|solution|solutions)(?:/|$|-)", path):
+        return "service"
+    if re.search(
+        r"/(?:offer|offers|pricing|package|packages|plan|plans)(?:/|$|-)",
+        path,
+    ):
+        return "offer"
+    if re.search(
+        r"/(?:about|case-study|case-studies|testimonial|testimonials|review|"
+        r"reviews|results)(?:/|$|-)",
+        path,
+    ):
+        return "trust"
+    if re.search(r"/(?:contact|connect)(?:/|$|-)", path):
+        return "contact"
+    return "other"
+
+
+def _firstlook_template_key(url: str, category: str) -> str:
+    path = unquote(urlsplit(url).path).lower().rstrip("/") or "/"
+    if category == "content":
+        return "content"
+    path = re.sub(r"/[0-9a-f]{8,}(?=/|$)", "/:id", path)
+    path = re.sub(r"/\d+(?=/|$)", "/:id", path)
+    return path
+
+
+def _firstlook_candidate_url(raw_url: str, base_url: str):
+    assert FIRSTLOOK_BOUNDARY is not None
+    try:
+        absolute = urljoin(base_url, html_unescape(raw_url.strip()))
+        split = urlsplit(absolute)
+        without_query = urlunsplit(
+            (split.scheme, split.netloc, split.path or "/", "", "")
+        )
+    except (TypeError, ValueError) as exc:
+        raise FirstlookURLRejected(f"invalid discovered URL: {exc}") from exc
+    return FIRSTLOOK_BOUNDARY.validate_same_host_url(without_query).normalized
+
+
+def _firstlook_add_page_candidate(
+    candidates, candidate_index, raw_url, root, provenance
+):
+    try:
+        normalized = _firstlook_candidate_url(raw_url, root)
+    except FirstlookBoundaryError as exc:
+        return {"url": raw_url, "reason": str(exc)}
+    path = unquote(urlsplit(normalized).path)
+    if _FIRSTLOOK_UTILITY_PATH.search(path):
+        return {"url": normalized, "reason": "archive or utility path skipped"}
+    if normalized in candidate_index:
+        candidate_index[normalized]["provenance"].append(provenance)
+        return None
+    category = _firstlook_page_category(normalized, root)
+    candidate = {
+        "url": normalized,
+        "category": category,
+        "template_key": _firstlook_template_key(normalized, category),
+        "provenance": [provenance],
+        "discovery_order": len(candidates),
+    }
+    candidates.append(candidate)
+    candidate_index[normalized] = candidate
+    return None
+
+
+def _firstlook_select_pages(candidates):
+    category_order = {
+        name: index for index, name in enumerate(_FIRSTLOOK_PAGE_CATEGORIES)
+    }
+    ordered = sorted(
+        candidates,
+        key=lambda item: (category_order[item["category"]], item["discovery_order"]),
+    )
+    selected = []
+    seen_templates = set()
+    selected_urls = set()
+    for category in _FIRSTLOOK_PAGE_CATEGORIES[:-1]:
+        candidate = next(
+            (item for item in ordered if item["category"] == category), None
+        )
+        if candidate is None:
+            continue
+        selected.append(candidate)
+        selected_urls.add(candidate["url"])
+        seen_templates.add(candidate["template_key"])
+    for candidate in ordered:
+        if len(selected) == FIRSTLOOK_MAX_PAGES:
+            break
+        if candidate["url"] in selected_urls:
+            continue
+        key = candidate["template_key"]
+        if key in seen_templates:
+            continue
+        seen_templates.add(key)
+        selected_urls.add(candidate["url"])
+        selected.append(candidate)
+    return selected
+
+
+def _firstlook_request_timeout(deadline: float, maximum: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise FirstlookFetchError("site-check deadline exceeded")
+    return min(maximum, remaining)
+
+
+def _firstlook_site_check(base_url: str) -> dict:
+    """Run the bounded check without HTTP, alternate hosts, or redirects."""
+    assert FIRSTLOOK_BOUNDARY is not None
+    approved_url = FIRSTLOOK_BOUNDARY.authorize_tool_url(base_url)
+    deadline = time.monotonic() + FIRSTLOOK_SITE_CHECK_SECONDS
+    approved = urlparse(approved_url)
+    root = f"https://{approved.netloc}"
+    page_candidates = []
+    page_candidate_index = {}
+    rejected_page_candidates = []
+    _firstlook_add_page_candidate(
+        page_candidates, page_candidate_index, root, root, "derived_homepage"
+    )
+    _firstlook_add_page_candidate(
+        page_candidates,
+        page_candidate_index,
+        approved_url,
+        root,
+        "approved_target",
+    )
+    results = {
+        "firstlook_staging": {
+            "approved_url": approved_url,
+            "redirects_followed": False,
+            "full_crawler_enabled": False,
+        }
+    }
+
+    declared_sitemaps = []
+    robots_url = f"{root}/robots.txt"
+    try:
+        response = FIRSTLOOK_BOUNDARY.get(
+            robots_url,
+            timeout=_firstlook_request_timeout(deadline, 10),
+            deadline=deadline,
+        )
+        if response.status_code == 200:
+            text = response.text
+            lines = text.splitlines()
+            disallow = [
+                line.split(":", 1)[1].strip()
+                for line in lines
+                if line.lower().startswith("disallow:")
+                and line.split(":", 1)[1].strip()
+            ]
+            all_declared_sitemaps = [
+                line.split(":", 1)[1].strip()
+                for line in lines
+                if line.lower().startswith("sitemap:")
+            ]
+            declared_sitemaps = all_declared_sitemaps[:FIRSTLOOK_MAX_SITEMAP_DOCUMENTS]
+            crawl_delay = next(
+                (
+                    line.split(":", 1)[1].strip()
+                    for line in lines
+                    if line.lower().startswith("crawl-delay:")
+                ),
+                None,
+            )
+            results["robots_txt"] = {
+                "found": True,
+                "disallow_count": len(disallow),
+                "disallow_rules": disallow[:20],
+                "important_blocked": [
+                    item for item in disallow
+                    if item in ("/", "/wp-admin", "/wp-login.php")
+                ],
+                "sitemap_declared": declared_sitemaps,
+                "sitemap_declared_count": len(all_declared_sitemaps),
+                "crawl_delay": crawl_delay,
+                "raw_preview": text[:500],
+            }
+        else:
+            results["robots_txt"] = {
+                "found": False,
+                "status": response.status_code,
+                "redirect_not_followed": 300 <= response.status_code < 400,
+                "warning": "robots.txt was not returned with HTTP 200.",
+            }
+    except FirstlookBoundaryError as exc:
+        results["robots_txt"] = {"error": str(exc)}
+
+    sitemap_queue = [
+        f"{root}/sitemap.xml",
+        f"{root}/sitemap_index.xml",
+        f"{root}/sitemap-index.xml",
+    ]
+    sitemap_queue.extend(declared_sitemaps)
+    rejected_declared = []
+    sitemap_fetch_errors = []
+    sitemap_documents = []
+    sitemap_responses = 0
+    sitemap_attempts = 0
+    seen = set()
+    sitemap_limit_reached = False
+    while sitemap_queue:
+        sitemap_url = sitemap_queue.pop(0)
+        try:
+            validated = FIRSTLOOK_BOUNDARY.validate_same_host_url(sitemap_url)
+        except FirstlookBoundaryError as exc:
+            rejected_declared.append({"url": sitemap_url, "reason": str(exc)})
+            continue
+        if validated.normalized in seen:
+            continue
+        seen.add(validated.normalized)
+        if sitemap_attempts >= FIRSTLOOK_MAX_SITEMAP_DOCUMENTS:
+            sitemap_limit_reached = True
+            break
+        sitemap_attempts += 1
+        try:
+            response = FIRSTLOOK_BOUNDARY.get(
+                validated.normalized,
+                timeout=_firstlook_request_timeout(deadline, 15),
+                deadline=deadline,
+            )
+            sitemap_responses += 1
+        except FirstlookBoundaryError as exc:
+            sitemap_fetch_errors.append(
+                {"url": validated.normalized, "error": str(exc)}
+            )
+            if time.monotonic() >= deadline:
+                break
+            continue
+        if response.status_code == 200 and (
+            "<urlset" in response.text or "<sitemapindex" in response.text
+        ):
+            is_index = "<sitemapindex" in response.text
+            locations = [
+                html_unescape(location.strip())
+                for location in re.findall(
+                    r"<loc(?:\s[^>]*)?>(.*?)</loc>",
+                    response.text,
+                    flags=re.IGNORECASE | re.DOTALL,
+                )
+            ]
+            document = {
+                "url": validated.normalized,
+                "type": "index" if is_index else "urlset",
+                "location_count": len(locations),
+            }
+            if is_index:
+                document["child_sitemaps"] = locations[:10]
+            sitemap_documents.append(document)
+            if is_index:
+                for location in locations:
+                    try:
+                        child = _firstlook_candidate_url(location, root)
+                    except FirstlookBoundaryError as exc:
+                        rejected_declared.append(
+                            {"url": location, "reason": str(exc)}
+                        )
+                        continue
+                    sitemap_queue.append(child)
+            else:
+                for location in locations:
+                    rejected = _firstlook_add_page_candidate(
+                        page_candidates,
+                        page_candidate_index,
+                        location,
+                        root,
+                        f"sitemap:{validated.normalized}",
+                    )
+                    if rejected and len(rejected_page_candidates) < 20:
+                        rejected_page_candidates.append(rejected)
+            discovered_categories = {
+                candidate["category"] for candidate in page_candidates
+            }
+            if _FIRSTLOOK_CRITICAL_CATEGORIES.issubset(discovered_categories):
+                break
+    if sitemap_documents:
+        primary = sitemap_documents[0]
+        results["sitemap"] = {
+            "found": True,
+            "url": primary["url"],
+            "is_index": primary["type"] == "index",
+            "url_count": sum(
+                document["location_count"]
+                for document in sitemap_documents
+                if document["type"] == "urlset"
+            ),
+            "child_sitemaps": primary.get("child_sitemaps", []),
+            "documents": sitemap_documents,
+            "redirects_followed": False,
+            "documents_attempted": sitemap_attempts,
+        }
+    else:
+        results["sitemap"] = {"found": False, "redirects_followed": False}
+        if sitemap_fetch_errors and sitemap_responses == 0:
+            results["sitemap"]["error"] = (
+                "No sitemap candidate could be fetched through the Firstlook boundary."
+            )
+        else:
+            results["sitemap"]["warning"] = (
+                "No same-host sitemap returned HTTP 200 with sitemap XML."
+            )
+        results["sitemap"]["documents_attempted"] = sitemap_attempts
+    results["sitemap"]["document_limit_reached"] = sitemap_limit_reached
+    if sitemap_fetch_errors:
+        results["sitemap"]["fetch_errors"] = sitemap_fetch_errors
+    if rejected_declared:
+        results["sitemap"]["rejected_declared_sitemaps"] = rejected_declared
+
+    selected_pages = _firstlook_select_pages(page_candidates)
+    audited_pages = []
+    page_fetch_errors = []
+    canonical_pages = {}
+    deadline_exhausted = False
+    for candidate in selected_pages:
+        try:
+            response = FIRSTLOOK_BOUNDARY.get(
+                candidate["url"],
+                timeout=_firstlook_request_timeout(deadline, 10),
+                deadline=deadline,
+            )
+        except FirstlookBoundaryError as exc:
+            page_fetch_errors.append(
+                {
+                    "url": candidate["url"],
+                    "category": candidate["category"],
+                    "provenance": candidate["provenance"],
+                    "error": str(exc),
+                }
+            )
+            if time.monotonic() >= deadline:
+                deadline_exhausted = True
+                break
+            continue
+
+        page = {
+            "url": candidate["url"],
+            "category": candidate["category"],
+            "provenance": candidate["provenance"],
+            "status_code": response.status_code,
+            "redirect_not_followed": 300 <= response.status_code < 400,
+        }
+        canonical_url = candidate["url"]
+        if response.status_code == 200:
+            extractor = _FirstlookPageExtractor()
+            extractor.feed(response.text)
+            page["title"] = " ".join(extractor.title.split())
+            page["h1"] = " ".join(extractor.h1.split())
+            if extractor.canonical:
+                try:
+                    canonical_url = _firstlook_candidate_url(
+                        extractor.canonical, candidate["url"]
+                    )
+                except FirstlookBoundaryError as exc:
+                    page["canonical_rejected"] = str(exc)
+        page["canonical_url"] = canonical_url
+        canonical_key = _firstlook_template_key(
+            canonical_url, _firstlook_page_category(canonical_url, root)
+        )
+        if canonical_key in canonical_pages:
+            page["duplicate_of"] = canonical_pages[canonical_key]
+            page["included"] = False
+        else:
+            canonical_pages[canonical_key] = canonical_url
+            page["included"] = True
+        audited_pages.append(page)
+
+    partial_reasons = []
+    if deadline_exhausted:
+        partial_reasons.append("overall deadline reached")
+    if sitemap_limit_reached:
+        partial_reasons.append("sitemap document limit reached")
+    if sitemap_fetch_errors:
+        partial_reasons.append("one or more sitemap documents could not be fetched")
+    if not sitemap_documents:
+        partial_reasons.append("no sitemap document available for page discovery")
+    if page_fetch_errors:
+        partial_reasons.append("one or more selected pages could not be fetched")
+    if len(page_candidates) > len(selected_pages):
+        partial_reasons.append("candidate pages exceeded selection or template limits")
+    discovered_categories = {
+        candidate["category"] for candidate in page_candidates
+    }
+    results["quick_audit"] = {
+        "page_limit": FIRSTLOOK_MAX_PAGES,
+        "pages_selected": len(selected_pages),
+        "pages_fetched": len(audited_pages),
+        "canonical_pages_audited": sum(
+            1 for page in audited_pages if page["included"]
+        ),
+        "selected_pages": audited_pages,
+        "selection": [
+            {
+                "url": candidate["url"],
+                "category": candidate["category"],
+                "provenance": candidate["provenance"],
+            }
+            for candidate in selected_pages
+        ],
+        "fetch_errors": page_fetch_errors,
+        "rejected_candidates": rejected_page_candidates,
+        "categories_discovered": sorted(discovered_categories),
+        "categories_not_discovered": [
+            category
+            for category in _FIRSTLOOK_PAGE_CATEGORIES[:-1]
+            if category not in discovered_categories
+        ],
+        "partial": bool(partial_reasons),
+        "partial_reasons": partial_reasons,
+        "external_links_crawled": False,
+    }
+
+    results["https_redirect"] = {
+        "skipped": True,
+        "reason": "HTTP requests are prohibited in Firstlook staging mode.",
+    }
+    results["www_redirect"] = {
+        "skipped": True,
+        "reason": "Alternate-host requests are prohibited in Firstlook staging mode.",
+    }
+    return results
+
+
 def _site_check(base_url: str) -> dict:
     """Fetch robots.txt, sitemap.xml, and check redirect behaviour."""
+    if FIRSTLOOK_STAGING_MODE:
+        try:
+            return _firstlook_site_check(base_url)
+        except FirstlookBoundaryError as exc:
+            return _firstlook_denied(exc)
+
     parsed   = urlparse(base_url)
     scheme   = parsed.scheme or "https"
     host     = parsed.netloc or parsed.path.rstrip("/")
@@ -1697,6 +2263,9 @@ def librecrawl_audit(url: str, max_pages: int = 0) -> dict:
         max_pages: Max pages to crawl. 0 = unlimited (default). Set e.g. 500 to
                    cap a large site. Crawls up to 2 hours before timing out.
     """
+    if denied := _firstlook_disabled("Full LibreCrawl audits"):
+        return denied
+
     started_at = time.time()
     # Reset any stale crawler state so this run starts clean
     reset_info = _ensure_crawler_ready()
@@ -1867,6 +2436,12 @@ def librecrawl_site_check(url: str) -> dict:
     sitemap.xml (existence, URL count, sitemap index), HTTPS redirect
     (http → https), and www/non-www canonicalisation.
 
+    In attended Firstlook staging mode, the URL must normalize to the exact
+    hard-coded Firstlook URL. The check uses pinned-IP HTTPS without redirects,
+    samples at most 10 prioritized same-host pages from at most 10 sitemap
+    documents, and never follows external links. HTTP and alternate-host
+    canonicalisation checks are skipped.
+
     USE THIS when asked:
     - "check robots.txt", "is the sitemap set up", "quick site health"
     - "does [site] redirect http to https", "www vs non-www check"
@@ -1891,6 +2466,9 @@ def librecrawl_generate_report(crawl_id: int = None) -> dict:
     Args:
         crawl_id: ID from librecrawl_start_crawl (optional — uses current crawl if omitted)
     """
+    if denied := _firstlook_disabled("Stored-crawl report generation"):
+        return denied
+
     base_url = ""
 
     if crawl_id is not None:
@@ -1952,6 +2530,9 @@ def librecrawl_start_crawl(url: str, max_pages: int = 0) -> dict:
         url:       Full URL to crawl (e.g. https://example.com)
         max_pages: Max pages to crawl. 0 = unlimited (default). Set e.g. 500 to cap.
     """
+    if denied := _firstlook_disabled("LibreCrawl start-crawl"):
+        return denied
+
     settings = {
         "enableJavaScript": False,
         "maxDepth": 5,
@@ -1979,6 +2560,8 @@ def librecrawl_get_status() -> dict:
     Poll current crawl progress. Repeat until is_running=False.
     Returns: is_running, crawled, queued, issues, base_url
     """
+    if denied := _firstlook_disabled("LibreCrawl status access"):
+        return denied
     d     = call("GET", "/api/crawl_status")
     stats = d.get("stats", {})
     return {
@@ -1998,6 +2581,8 @@ def librecrawl_export_results(crawl_id: int = None) -> dict:
     Args:
         crawl_id: ID from librecrawl_start_crawl (optional)
     """
+    if denied := _firstlook_disabled("LibreCrawl result export"):
+        return denied
     if crawl_id is not None:
         call("POST", f"/api/crawls/{crawl_id}/load")
 
@@ -2013,18 +2598,24 @@ def librecrawl_export_results(crawl_id: int = None) -> dict:
 @mcp.tool()
 def librecrawl_list_crawls() -> dict:
     """List all saved crawls with URL, crawl_id, and timestamp."""
+    if denied := _firstlook_disabled("LibreCrawl history access"):
+        return denied
     return call("GET", "/api/crawls/list")
 
 
 @mcp.tool()
 def librecrawl_stop_crawl() -> dict:
     """Stop the currently running crawl."""
+    if denied := _firstlook_disabled("LibreCrawl stop control"):
+        return denied
     return call("POST", "/api/stop_crawl")
 
 
 @mcp.tool()
 def librecrawl_pause_crawl() -> dict:
     """Pause the currently running crawl. Resume with librecrawl_resume_crawl()."""
+    if denied := _firstlook_disabled("LibreCrawl pause control"):
+        return denied
     try:
         return call("POST", "/api/pause_crawl")
     except Exception as e:
@@ -2035,6 +2626,8 @@ def librecrawl_pause_crawl() -> dict:
 @mcp.tool()
 def librecrawl_resume_crawl() -> dict:
     """Resume a paused crawl in the current session."""
+    if denied := _firstlook_disabled("LibreCrawl crawl resume"):
+        return denied
     try:
         return call("POST", "/api/resume_crawl")
     except Exception as e:
@@ -2067,6 +2660,9 @@ def librecrawl_resume_from_crawl_id(crawl_id: int) -> dict:
     Returns success + a `next` hint telling you to poll librecrawl_get_status()
     until is_running=False, then call librecrawl_generate_report(crawl_id).
     """
+    if denied := _firstlook_disabled("LibreCrawl persisted-crawl resume"):
+        return denied
+
     # Two scenarios to handle:
     #
     # (a) "In-session resume" — the crawl was paused in the same upstream Flask session
@@ -2120,6 +2716,8 @@ def librecrawl_get_settings() -> dict:
     Get current crawler settings (maxUrls, maxDepth, crawlDelay, JS rendering, etc).
     Useful to confirm settings before starting a crawl.
     """
+    if denied := _firstlook_disabled("LibreCrawl settings access"):
+        return denied
     return call("GET", "/api/get_settings")
 
 
@@ -2132,6 +2730,8 @@ def librecrawl_filter_issues(patterns: list) -> dict:
     Args:
         patterns: List of strings to exclude (e.g. ["/wp-admin/", "cdn.example.com"])
     """
+    if denied := _firstlook_disabled("LibreCrawl issue filtering"):
+        return denied
     try:
         return call("POST", "/api/filter_issues", json={"patterns": patterns})
     except Exception as e:
@@ -2148,6 +2748,8 @@ def librecrawl_visualization_data() -> dict:
 
     Returns: nodes list (url, depth, status) and edges list (source → target links).
     """
+    if denied := _firstlook_disabled("LibreCrawl visualization export"):
+        return denied
     try:
         return call("GET", "/api/visualization_data")
     except Exception as e:
@@ -2175,6 +2777,8 @@ def librecrawl_internal_links_analysis(crawl_id: int = None) -> dict:
     Args:
         crawl_id: ID from librecrawl_start_crawl (optional — uses current crawl)
     """
+    if denied := _firstlook_disabled("Crawler-backed internal-link analysis"):
+        return denied
     if crawl_id is not None:
         call("POST", f"/api/crawls/{crawl_id}/load")
 
@@ -2286,6 +2890,8 @@ def librecrawl_internal_links_analysis(crawl_id: int = None) -> dict:
 
 def _fetch_psi(url: str, strategy: str = "mobile") -> dict:
     """Fetch Core Web Vitals + performance score from Google PSI API."""
+    if denied := _firstlook_disabled("PageSpeed Insights"):
+        return denied
     if not PSI_API_KEY:
         return {"error": "PAGESPEED_API_KEY not set."}
     params = {"url": url, "key": PSI_API_KEY, "strategy": strategy,
@@ -2361,6 +2967,8 @@ def librecrawl_pagespeed(url: str, strategy: str = "mobile") -> dict:
         url:      Full URL to test
         strategy: "mobile" (default) or "desktop"
     """
+    if denied := _firstlook_disabled("PageSpeed Insights"):
+        return denied
     return _fetch_psi(url, strategy)
 
 
@@ -2379,6 +2987,8 @@ def librecrawl_pagespeed_audit(urls: list, strategy: str = "mobile") -> dict:
         urls:     List of URLs to test (recommend top 10–25 pages)
         strategy: "mobile" (default) or "desktop"
     """
+    if denied := _firstlook_disabled("Batch PageSpeed Insights"):
+        return denied
     if not PSI_API_KEY:
         return {"error": "PAGESPEED_API_KEY not set."}
 
@@ -2471,6 +3081,32 @@ def _validate_public_url(url: str) -> str | None:
 
 
 def _extract_schema(url: str) -> list:
+    if FIRSTLOOK_STAGING_MODE:
+        assert FIRSTLOOK_BOUNDARY is not None
+        try:
+            approved_url = FIRSTLOOK_BOUNDARY.authorize_tool_url(url)
+            response = FIRSTLOOK_BOUNDARY.get(
+                approved_url,
+                timeout=15,
+                headers={"User-Agent": "LibreCrawl-Firstlook/1.0"},
+            )
+            if response.status_code != 200:
+                redirect_note = (
+                    " (redirect not followed)"
+                    if 300 <= response.status_code < 400 else ""
+                )
+                return [{
+                    "error": (
+                        f"approved URL returned HTTP {response.status_code}"
+                        f"{redirect_note}"
+                    )
+                }]
+            parser = _JsonLdExtractor()
+            parser.feed(response.text)
+            return parser.schemas
+        except FirstlookBoundaryError as exc:
+            return [{"error": str(exc)}]
+
     err = _validate_public_url(url)
     if err:
         return [{"error": err}]
@@ -2516,6 +3152,10 @@ def librecrawl_schema_check(url: str) -> dict:
     (FAQ accordion, star ratings, breadcrumbs, product snippets, etc.),
     and which high-value schema types are missing.
 
+    In attended Firstlook staging mode, the URL must normalize to the exact
+    hard-coded Firstlook URL and is fetched through pinned-IP HTTPS without
+    redirects.
+
     USE THIS when asked:
     - "does [page] have schema markup", "check structured data", "JSON-LD audit"
     - "what rich results is this page eligible for", "add FAQ schema"
@@ -2523,7 +3163,22 @@ def librecrawl_schema_check(url: str) -> dict:
     Args:
         url: Full URL to check
     """
+    if FIRSTLOOK_STAGING_MODE:
+        assert FIRSTLOOK_BOUNDARY is not None
+        try:
+            url = FIRSTLOOK_BOUNDARY.authorize_tool_url(url)
+        except FirstlookBoundaryError as exc:
+            return _firstlook_denied(exc)
     schemas = _extract_schema(url)
+    if FIRSTLOOK_STAGING_MODE:
+        fetch_errors = [schema["error"] for schema in schemas if "error" in schema]
+        if fetch_errors:
+            return {
+                "success": False,
+                "error": f"Schema fetch failed: {fetch_errors[0]}",
+                "url": url,
+                "firstlook_staging_mode": True,
+            }
     found_types = [s.get("type") for s in schemas if "type" in s]
     return {
         "url": url,
@@ -2560,6 +3215,9 @@ def librecrawl_schema_audit(urls: list, batch_size: int = 50, batch_delay: float
         batch_size:  Pages between status messages, default 50.
         batch_delay: Sleep between requests in seconds, default 0.3.
     """
+    if denied := _firstlook_disabled("Batch schema audit"):
+        return denied
+
     results    = []
     no_schema  = []
     type_count = defaultdict(int)
@@ -2613,6 +3271,9 @@ def librecrawl_schema_validate(crawl_id: int) -> dict:
     Returns:
         summary + per-finding breakdown + path to schema-validation.csv.
     """
+    if denied := _firstlook_disabled("Crawler-backed schema validation"):
+        return denied
+
     import csv as csv_mod
     from datetime import datetime
     from pathlib import Path
@@ -2716,6 +3377,9 @@ def librecrawl_append_gsc_section(report_path: str, gsc_data: dict) -> dict:
         report_path: Path returned by librecrawl_audit() or librecrawl_generate_report()
         gsc_data:    GSC data dict from the gsc-posi connector
     """
+    if denied := _firstlook_disabled("GSC report mutation"):
+        return denied
+
     path = Path(report_path).resolve()
     if not str(path).startswith(str(REPORTS_DIR.resolve())):
         return {"success": False, "error": "report_path must be within REPORTS_DIR"}
@@ -2918,6 +3582,9 @@ def librecrawl_merge_gsc_data(crawl_id: int, gsc_data: dict) -> dict:
 
     Returns: summary + paths to all 4 written CSVs (augmented per-page + 3 new).
     """
+    if denied := _firstlook_disabled("Crawler-backed GSC merge"):
+        return denied
+
     import csv as csv_mod
     import os
     from datetime import datetime
@@ -3100,7 +3767,10 @@ import state as _state           # noqa: E402  — late import to avoid circular
 import runner as _runner          # noqa: E402
 
 _state.init_db()
-_runner.start_runner()
+if not FIRSTLOOK_STAGING_MODE:
+    # Boot recovery can resume an old crawler session, so even starting the
+    # worker is forbidden inside the attended fixed-domain exception.
+    _runner.start_runner()
 
 
 @mcp.tool()
@@ -3152,6 +3822,9 @@ def librecrawl_start_chunked_audit(url: str, total_max_pages: int = 10000,
                             sitemap_fill event. Bump only when you genuinely
                             need exhaustive coverage on a huge site.
     """
+    if denied := _firstlook_disabled("Chunked LibreCrawl audits"):
+        return denied
+
     if total_max_pages > 100_000 and not confirm_unbounded:
         return {"success": False, "error":
                 f"total_max_pages={total_max_pages} exceeds soft ceiling 100k. "
@@ -3196,6 +3869,9 @@ def librecrawl_audit_status(session_id: str) -> dict:
       incomplete_reasons   — list of what went wrong, if anything
       artifacts_ready      — True once finalize has run and PDF/MD/CSVs are on disk
     """
+    if denied := _firstlook_disabled("Chunked audit status"):
+        return denied
+
     s = _state.get_session(session_id)
     if not s:
         return {"success": False, "error": f"Unknown session_id: {session_id}"}
@@ -3248,6 +3924,9 @@ def librecrawl_audit_artifacts(session_id: str) -> dict:
     Args:
         session_id: From librecrawl_start_chunked_audit().
     """
+    if denied := _firstlook_disabled("Chunked audit artifact access"):
+        return denied
+
     s = _state.get_session(session_id)
     if not s:
         return {"success": False, "error": f"Unknown session_id: {session_id}"}
@@ -3270,18 +3949,24 @@ def librecrawl_audit_artifacts(session_id: str) -> dict:
 @mcp.tool()
 def librecrawl_audit_pause(session_id: str) -> dict:
     """Pause a crawling session. Resume with librecrawl_audit_resume()."""
+    if denied := _firstlook_disabled("Chunked audit pause"):
+        return denied
     return _runner.pause_session(session_id)
 
 
 @mcp.tool()
 def librecrawl_audit_resume(session_id: str) -> dict:
     """Resume a paused or throttled session. Runner picks it back up on the next loop."""
+    if denied := _firstlook_disabled("Chunked audit resume"):
+        return denied
     return _runner.resume_session(session_id)
 
 
 @mcp.tool()
 def librecrawl_audit_cancel(session_id: str) -> dict:
     """Terminal stop. Upstream crawl is stopped; partial artifacts are kept where written."""
+    if denied := _firstlook_disabled("Chunked audit cancel"):
+        return denied
     return _runner.cancel_session(session_id)
 
 
@@ -3295,6 +3980,8 @@ def librecrawl_audit_force_advance(session_id: str) -> dict:
     Only use when status has been 'crawling'/'throttled' for an unusually long
     time and recent_events shows no progress.
     """
+    if denied := _firstlook_disabled("Chunked audit force-advance"):
+        return denied
     return _runner.force_advance(session_id)
 
 
@@ -3329,6 +4016,9 @@ def librecrawl_full_audit_strict(url: str, max_pages: int = 0, auto_purge: bool 
                        False (or keep_for_days>0) to retain it for re-export.
         keep_for_days: Retention override. >0 disables auto_purge.
     """
+    if denied := _firstlook_disabled("Strict full LibreCrawl audits"):
+        return denied
+
     result = librecrawl_audit(url=url, max_pages=max_pages)
     if not result.get("success"):
         result["strict_mode"] = True
@@ -3389,6 +4079,9 @@ def librecrawl_report_content(report_path: str, max_chars: int = 200_000) -> dic
         max_chars:   Max characters to return. Default 200k. Content beyond
                      this is truncated; set higher only if your client can handle it.
     """
+    if denied := _firstlook_disabled("Stored report access"):
+        return denied
+
     p = Path(report_path).resolve()
     if not str(p).startswith(str(REPORTS_DIR.resolve())):
         return {"success": False, "error": f"Path must be within REPORTS_DIR ({REPORTS_DIR})"}
@@ -3430,6 +4123,9 @@ def librecrawl_audit_pdf(report_path: str, base_url: str = "") -> dict:
 
     Returns: {success, pdf_path, size_bytes, pages, generated}.
     """
+    if denied := _firstlook_disabled("PDF report rendering"):
+        return denied
+
     import pdf_report
     p = Path(report_path).resolve()
     if not str(p).startswith(str(REPORTS_DIR.resolve())):
@@ -3483,6 +4179,8 @@ def librecrawl_pagespeed_audit_all_crawl_pages(crawl_id: int, strategy: str = "m
                        If limit > 0 and the crawl has more, batch_caps_hit=True.
         delay_seconds: Sleep between PSI calls. Default 1.0 (under PSI rate limit).
     """
+    if denied := _firstlook_disabled("Crawler-backed PageSpeed audit"):
+        return denied
     if not PSI_API_KEY:
         return {"success": False, "error": "PAGESPEED_API_KEY not set in environment."}
 
@@ -3568,6 +4266,9 @@ def librecrawl_external_links_audit(crawl_id: int, max_workers: int = 10,
                          but watch your bandwidth and any per-target rate limits.
         timeout_seconds: Per-request timeout (default 10s).
     """
+    if denied := _firstlook_disabled("External-link validation"):
+        return denied
+
     from datetime import datetime
     from pathlib import Path
     import external_links
@@ -3618,6 +4319,9 @@ def librecrawl_brain_purge_audit(crawl_id: int) -> dict:
     Args:
         crawl_id: ID returned by librecrawl_audit / start_crawl / list_crawls.
     """
+    if denied := _firstlook_disabled("LibreCrawl record purge"):
+        return denied
+
     # Try the canonical REST delete first. If upstream LibreCrawl doesn't
     # expose it, fall back to /api/clear_data (clears the active in-memory
     # crawler, leaving the DB record but freeing memory).
@@ -3751,6 +4455,9 @@ def librecrawl_audit_zip(session_id: str, auto_cleanup: bool = True) -> dict:
       cleanup:                  what was wiped server-side
       note:                     embedded usage reminder for the calling agent
     """
+    if denied := _firstlook_disabled("Audit archive generation"):
+        return denied
+
     import base64 as _b64
     import hashlib as _hl
     import io as _io
@@ -3905,6 +4612,9 @@ def librecrawl_wipe_everything(confirm: bool = False) -> dict:
     Returns counts: sessions wiped, files deleted, upstream crawls deleted,
     and bytes reclaimed on disk.
     """
+    if denied := _firstlook_disabled("Global audit-data wipe"):
+        return denied
+
     from pathlib import Path as _Path
 
     if not confirm:

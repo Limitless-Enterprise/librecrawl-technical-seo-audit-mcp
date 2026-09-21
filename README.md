@@ -442,6 +442,12 @@ All environment variables are optional — the defaults just work. Set them via 
 | `REPORTS_DIR` | `~/librecrawl-reports` | Where audit zips land |
 | `LIBRECRAWL_UPSTREAM_DB` | `~/.librecrawl/upstream/users.db` | LibreCrawl's SQLite, for orphan/cleanup checks (degrades gracefully if absent) |
 | `PAGESPEED_API_KEY` | unset | Optional — enables `librecrawl_pagespeed*` (raises PSI limits) |
+| `FIRSTLOOK_STAGING_MODE` | `false` | Literal `true`/`false` switch for the attended fixed-domain staging boundary; not a production mode |
+
+The attended Firstlook mode enables site and schema checks only for the
+hard-coded `https://www.limitlessenterprise.ai/audit` target;
+every other MCP tool is disabled. Its threat model and deployment controls are documented in
+[`docs/FIRSTLOOK-STAGING.md`](docs/FIRSTLOOK-STAGING.md).
 
 📖 Full reference, per-client config, and transport details: **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**.
 
@@ -484,6 +490,7 @@ Deeper guides live in [`docs/`](docs/):
 |---|---|
 | **[Getting Started](docs/GETTING-STARTED.md)** | Install every way (one-liner · Docker · manual), per-client config for Claude Code/Desktop, Cursor, Windsurf, Codex, Continue.dev, and your first audit end-to-end |
 | **[Configuration](docs/CONFIGURATION.md)** | Every environment variable, HTTP vs stdio transport, ports, reports directory, PageSpeed key |
+| **[Firstlook staging boundary](docs/FIRSTLOOK-STAGING.md)** | Fixed-domain threat model, disabled paths, rollout, rollback, and immutable deployment evidence |
 | **[Tools Reference](docs/TOOLS.md)** | All 37 MCP tools — signatures, arguments, when to use each |
 | **[Architecture](docs/ARCHITECTURE.md)** | How the wrapper, background worker, AIMD controller, and LibreCrawl backend fit together |
 | **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Common errors and fixes — backend unreachable, empty audits, PDF/WeasyPrint, Docker health, big-site tuning |

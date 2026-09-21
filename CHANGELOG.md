@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Opt-in attended Firstlook staging mode fixed to
+  `https://www.limitlessenterprise.ai/audit`,
+  public-address DNS validation, pinned-IP HTTPS with verified Host/SNI, and
+  redirects disabled. Only the site and schema checks are callable in this
+  mode; the full crawler and every other MCP tool remain disabled.
+- Adversarial boundary tests and a documented bounded-High staging threat
+  model, rollback procedure, and immutable deployment-evidence checklist.
+
+### Fixed
+- Pin `mcp<2` in `requirements.txt`; the server uses the FastMCP v1 API,
+  which MCP 2.x removed.
+
 ## [2.2.0] — 2026-07-14
 ### Added
 - **One-command Docker deploy.** New `docker-compose.yml` brings up the LibreCrawl
