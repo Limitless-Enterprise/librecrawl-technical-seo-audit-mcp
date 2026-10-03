@@ -64,6 +64,22 @@ class FirstlookServerModeTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
 
+    def test_attended_protocol_advertises_only_fixed_target_tools(self):
+        result = self.run_server_script(
+            r'''
+            import asyncio
+            import server
+
+            tools = asyncio.run(server.mcp.list_tools())
+            assert {tool.name for tool in tools} == {
+                "librecrawl_site_check",
+                "librecrawl_schema_check",
+            }
+            '''
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+
     def test_general_mode_remains_the_default(self):
         with tempfile.TemporaryDirectory(dir=REPO_ROOT) as temp_dir:
             env = os.environ.copy()

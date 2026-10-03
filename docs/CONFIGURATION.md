@@ -29,9 +29,10 @@ Only `librecrawl_site_check` and `librecrawl_schema_check` may fetch the
 approved host. Their URL arguments are checked for exact normalized equality
 with `https://www.limitlessenterprise.ai/audit`; the submitted value never
 selects a destination and no environment variable can replace the target.
-Every other MCP tool is disabled in this mode, including full crawls,
-background-runner recovery, PageSpeed, batch schema checks, stored results,
-maintenance controls, external-link validation, and PDF rendering.
+Every other MCP tool is omitted from the attended protocol surface, including
+full crawls, background-runner recovery, PageSpeed, batch schema checks, stored
+results, maintenance controls, external-link validation, and PDF rendering.
+Direct Python calls remain guarded and return a Firstlook-disabled response.
 
 Do not expose this as public automatic audit generation. See
 [`FIRSTLOOK-STAGING.md`](FIRSTLOOK-STAGING.md) for the threat model, rollout,

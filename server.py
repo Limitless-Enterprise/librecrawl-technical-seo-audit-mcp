@@ -4664,6 +4664,21 @@ def librecrawl_wipe_everything(confirm: bool = False) -> dict:
     }
 
 
+if FIRSTLOOK_STAGING_MODE:
+    # Build a separate protocol surface for the attended exception. Keeping the
+    # denial guards on the general tool functions is useful defense in depth for
+    # direct Python callers, but registering those tools would still advertise
+    # them as callable MCP capabilities. The staging server exposes only the two
+    # fixed-target checks; general mode keeps the original 37-tool inventory.
+    attended_mcp = FastMCP(
+        "librecrawl-mcp",
+        instructions=FIRSTLOOK_MCP_INSTRUCTIONS,
+    )
+    attended_mcp.add_tool(librecrawl_site_check)
+    attended_mcp.add_tool(librecrawl_schema_check)
+    mcp = attended_mcp
+
+
 if __name__ == "__main__":
     transport = os.getenv("MCP_TRANSPORT", "http")
     if transport == "stdio":

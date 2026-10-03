@@ -14,8 +14,8 @@ LibreCrawl crawler are each hardened and reviewed as a complete system.
 
 The MCP wrapper and LibreCrawl are separate security boundaries:
 
-- `server.py` is the MCP surface. In Firstlook mode, only its direct fixed-host
-  site and schema checks are enabled for attended use.
+- `server.py` is the MCP surface. In Firstlook mode, its advertised tool
+  inventory contains only the direct fixed-host site and schema checks.
 - LibreCrawl is a separate full crawler process with its own URL frontier,
   redirects, rendering, and secondary fetches. This change does not make that
   engine SSRF-safe. The background runner is not started and all start/resume
@@ -93,7 +93,7 @@ checks are intentionally skipped because they would cross the staging boundary.
 | `extended_checks.py` | Direct sitemap/robots/page fetches | Unreachable because runner is disabled |
 | `external_links.py` / external-links tool | Direct arbitrary outbound-link fetches | Tool disabled; runner unreachable |
 | `librecrawl_audit_pdf` / WeasyPrint | Can resolve document resources | Disabled |
-| All remaining MCP tools | Stored-result, control, maintenance, or mutation surfaces | Disabled; only the two attended checks are callable |
+| All remaining MCP tools | Stored-result, control, maintenance, or mutation surfaces | Not registered on the attended MCP surface; direct-call guards still deny them |
 
 None of the disabled paths should be described as secured. They remain
 production-hardening dependencies.
@@ -106,16 +106,25 @@ Run the complete repository test suite:
 python -m unittest discover -v
 ```
 
-The adversarial suite covers direct and DNS-resolved private IPv4/IPv6,
-loopback, link-local, multicast/reserved/unspecified, metadata, Tailscale CGNAT,
-mixed public/private answers, rebinding, internal names, non-443 ports,
-credentials, query/fragment input, exact URL mismatches, and both same-host and
-off-host redirects. It also asserts that rejected inputs never reach the
-connection factory, and successful calls hand only a validated numeric address
-to the transport while preserving Host and TLS SNI. Site-check coverage also
-asserts the 10-document sitemap ceiling, prioritized 10-page frontier,
-same-host and utility filtering, query/canonical/template deduplication,
-provenance, deadline propagation, and explicit fetch-failure reporting.
+The pull-request-only isolation job additionally drives the production pinned
+connector through a real TLS socket on TCP 443 with a controlled public address,
+verified Host/SNI/certificate identity, simulated rebinding, and same-host and
+off-host redirect responses. It also installs the exact checkout into a clean
+external directory and initializes the installed MCP server over stdio. These
+checks are opt-in because they require a disposable root-capable Linux runner
+and a fresh dependency environment.
+
+The adversarial suite covers the two-tool MCP inventory, direct and DNS-resolved
+private IPv4/IPv6, loopback, link-local, multicast/reserved/unspecified,
+metadata, Tailscale CGNAT, mixed public/private answers, rebinding, internal
+names, non-443 ports, credentials, query/fragment input, exact URL mismatches,
+and both same-host and off-host redirects. It also asserts that rejected inputs
+never reach the connection factory, and successful calls hand only a validated
+numeric address to the transport while preserving Host and TLS SNI. Site-check
+coverage also asserts the 10-document sitemap ceiling, prioritized 10-page
+frontier, same-host and utility filtering, query/canonical/template
+deduplication, provenance, deadline propagation, and explicit fetch-failure
+reporting.
 
 ## Attended rollout
 
@@ -127,8 +136,9 @@ provenance, deadline propagation, and explicit fetch-failure reporting.
    reported approved URL is `https://www.limitlessenterprise.ai/audit`.
 5. Confirm an environment-provided target cannot change the reported approved
    URL, then exercise only the site and schema checks with that URL.
-6. Confirm every tool except `librecrawl_site_check` and
-   `librecrawl_schema_check` returns a Firstlook-disabled response.
+6. Confirm `tools/list` exposes exactly `librecrawl_site_check` and
+   `librecrawl_schema_check`; no general crawler, report, or maintenance tool is
+   registered on the attended MCP surface.
 7. Keep an operator present for the sample and retain request/denial logs in
    the Tower layer.
 

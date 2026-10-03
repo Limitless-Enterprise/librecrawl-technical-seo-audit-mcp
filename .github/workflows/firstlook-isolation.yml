@@ -1,0 +1,45 @@
+name: Firstlook isolation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  attended-boundary:
+    name: Attended boundary isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Prove pinned socket, TLS identity, and redirect containment
+        run: |
+          sudo env \
+            FIRSTLOOK_CI_ISOLATION=true \
+            "$(command -v python)" -m unittest -v \
+            tests.test_firstlook_ci_isolation.FirstlookSocketIsolationTests
+
+      - name: Prove clean install and attended MCP inventory
+        env:
+          FIRSTLOOK_CI_ISOLATION: "true"
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        run: |
+          python -m unittest -v \
+            tests.test_firstlook_ci_isolation.FreshInstallIsolationTests
