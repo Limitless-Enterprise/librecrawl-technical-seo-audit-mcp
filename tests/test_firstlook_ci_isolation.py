@@ -35,6 +35,11 @@ APPROVED_HOST = "www.limitlessenterprise.ai"
 APPROVED_URL = f"https://{APPROVED_HOST}/audit"
 PUBLIC_TEST_ADDRESS = "93.184.216.34"
 RUN_ISOLATION = os.environ.get("FIRSTLOOK_CI_ISOLATION") == "true"
+MCP_SOURCE_BASE_URL = (
+    "https://raw.githubusercontent.com/Limitless-Enterprise/"
+    "librecrawl-technical-seo-audit-mcp/"
+    "fa16b4528511f301822e8455b915ecfdff095715"
+)
 MODULES = (
     "server.py",
     "firstlook_security.py",
@@ -394,6 +399,7 @@ class FreshInstallIsolationTests(unittest.TestCase):
                   shift
                 done
                 if [[ -z "$output" || "$output" == "/dev/null" ]]; then exit 0; fi
+                if [[ "$url" != "$EXPECTED_MCP_SOURCE_BASE_URL/"* ]]; then exit 22; fi
                 mkdir -p "$(dirname "$output")"
                 if [[ "$url" == */SKILL.md ]]; then
                   printf '%s\n' '# installed test skill' > "$output"
@@ -407,6 +413,7 @@ class FreshInstallIsolationTests(unittest.TestCase):
             environment.update(
                 {
                     "FIRSTLOOK_SOURCE_ROOT": str(ROOT),
+                    "EXPECTED_MCP_SOURCE_BASE_URL": MCP_SOURCE_BASE_URL,
                     "HOME": str(temporary / "home"),
                     "INSTALL_DIR": str(install_directory),
                     "PAGESPEED_API_KEY": "test-key",

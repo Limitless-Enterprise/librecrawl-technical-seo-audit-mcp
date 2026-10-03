@@ -110,9 +110,11 @@ The pull-request-only isolation job additionally drives the production pinned
 connector through a real TLS socket on TCP 443 with a controlled public address,
 verified Host/SNI/certificate identity, simulated rebinding, and same-host and
 off-host redirect responses. It also installs the exact checkout into a clean
-external directory and initializes the installed MCP server over stdio. These
-checks are opt-in because they require a disposable root-capable Linux runner
-and a fresh dependency environment.
+external directory from the authorized Limitless Enterprise fork pinned at
+`fa16b4528511f301822e8455b915ecfdff095715`, rejects any other module source,
+and initializes the installed MCP server over stdio. These checks are opt-in
+because they require a disposable root-capable Linux runner and a fresh
+dependency environment.
 
 The adversarial suite covers the two-tool MCP inventory, direct and DNS-resolved
 private IPv4/IPv6, loopback, link-local, multicast/reserved/unspecified,

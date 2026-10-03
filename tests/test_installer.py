@@ -8,6 +8,11 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MCP_SOURCE_BASE_URL = (
+    "https://raw.githubusercontent.com/Limitless-Enterprise/"
+    "librecrawl-technical-seo-audit-mcp/"
+    "fa16b4528511f301822e8455b915ecfdff095715"
+)
 
 
 class InstallerTests(unittest.TestCase):
@@ -69,10 +74,16 @@ class InstallerTests(unittest.TestCase):
                 """
                 printf 'curl %s\\n' "$*" >> "$INSTALLER_TEST_LOG"
                 output=''
+                url=''
                 while (( $# )); do
                   if [[ "$1" == "-o" ]]; then output="$2"; shift 2; continue; fi
+                  if [[ "$1" != -* ]]; then url="$1"; fi
                   shift
                 done
+                if [[ -n "$output" && "$output" != "/dev/null" &&
+                      "$url" != "$EXPECTED_MCP_SOURCE_BASE_URL/"* ]]; then
+                  exit 22
+                fi
                 if [[ -n "$output" && "$output" != "/dev/null" ]]; then
                   mkdir -p "$(dirname "$output")"
                   printf '# downloaded fixture\\n' > "$output"
@@ -87,6 +98,7 @@ class InstallerTests(unittest.TestCase):
                     "HOME": str(temporary / "home"),
                     "INSTALL_DIR": str(install_directory),
                     "INSTALLER_TEST_LOG": str(log_path),
+                    "EXPECTED_MCP_SOURCE_BASE_URL": MCP_SOURCE_BASE_URL,
                     "PAGESPEED_API_KEY": "test-key",
                     "PATH": f"{binary_directory}:{environment['PATH']}",
                 }
@@ -102,7 +114,9 @@ class InstallerTests(unittest.TestCase):
             )
 
             command_log = log_path.read_text()
-            self.assertIn("/firstlook_security.py", command_log)
+            self.assertIn(
+                f"{MCP_SOURCE_BASE_URL}/firstlook_security.py", command_log
+            )
             self.assertTrue(
                 (install_directory / "mcp-server" / "firstlook_security.py").is_file()
             )

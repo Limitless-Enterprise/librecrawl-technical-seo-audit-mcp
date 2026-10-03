@@ -207,7 +207,9 @@ mkdir -p "${MCP_DIR}"
 # server.py is the FastMCP entrypoint; the others are imported by it.
 # Server-side instructions + ephemeral mode + 37 tools all need these files.
 info "Downloading MCP server modules from GitHub (11 files)..."
-BASE_URL="https://raw.githubusercontent.com/adityaarsharma/librecrawl-technical-seo-audit-mcp/main"
+MCP_SOURCE_REPOSITORY="Limitless-Enterprise/librecrawl-technical-seo-audit-mcp"
+MCP_SOURCE_COMMIT="fa16b4528511f301822e8455b915ecfdff095715"
+BASE_URL="https://raw.githubusercontent.com/${MCP_SOURCE_REPOSITORY}/${MCP_SOURCE_COMMIT}"
 for f in server.py firstlook_security.py state.py libreclient.py runner.py external_links.py \
          content_audit.py extended_checks.py schema_validator.py \
          sitemap_fill.py pdf_report.py; do
