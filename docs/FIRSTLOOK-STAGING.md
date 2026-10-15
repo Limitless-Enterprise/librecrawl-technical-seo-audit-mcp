@@ -32,7 +32,7 @@ FIRSTLOOK_STAGING_MODE=true
 The switch accepts only literal `true`, literal `false`, or an unset value.
 
 The only authorized tool URL is
-`https://www.limitlessenterprise.ai/audit`. It has:
+`https://limitlessenterprise.ai/audit`. It has:
 
 - HTTPS only;
 - port 443, whether implicit or explicit;
@@ -135,7 +135,7 @@ reporting.
 3. Record the immutable source commit and resulting image digest in the Tower
    integration change record before starting the container.
 4. Enable Firstlook mode only in the attended staging service; confirm the
-   reported approved URL is `https://www.limitlessenterprise.ai/audit`.
+   reported approved URL is `https://limitlessenterprise.ai/audit`.
 5. Confirm an environment-provided target cannot change the reported approved
    URL, then exercise only the site and schema checks with that URL.
 6. Confirm `tools/list` exposes exactly `librecrawl_site_check` and
@@ -171,7 +171,7 @@ Suggested change-record entry:
 LibreCrawl MCP commit: <40-char SHA>
 LibreCrawl MCP image: <registry/repository@sha256:digest>
 Tower revision: <revision>
-Approved URL: https://www.limitlessenterprise.ai/audit
+Approved URL: https://limitlessenterprise.ai/audit
 FIRSTLOOK_STAGING_MODE: true
 Public automatic audit generation: disabled
 Deployed at/by: <timestamp> / <operator>

@@ -10,7 +10,7 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-APPROVED_URL = "https://www.limitlessenterprise.ai/audit"
+APPROVED_URL = "https://limitlessenterprise.ai/audit"
 
 
 class FirstlookServerModeTests(unittest.TestCase):
@@ -145,9 +145,9 @@ class FirstlookServerModeTests(unittest.TestCase):
                     )
                 def getresponse(self):
                     if self.path == "/robots.txt":
-                        return Response(b"User-agent: *\nSitemap: https://www.limitlessenterprise.ai/sitemap.xml")
+                        return Response(b"User-agent: *\nSitemap: https://limitlessenterprise.ai/sitemap.xml")
                     if self.path == "/sitemap.xml":
-                        return Response(b"<urlset><url><loc>https://www.limitlessenterprise.ai/audit</loc></url></urlset>")
+                        return Response(b"<urlset><url><loc>https://limitlessenterprise.ai/audit</loc></url></urlset>")
                     if self.path == "/audit" and audit_status["value"] != 200:
                         return Response(b"", status=audit_status["value"])
                     return Response(
@@ -159,7 +159,7 @@ class FirstlookServerModeTests(unittest.TestCase):
                     pass
 
             server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
-                "https://www.limitlessenterprise.ai/audit",
+                "https://limitlessenterprise.ai/audit",
                 resolver=lambda _host, _port: (PUBLIC_IP,),
                 connection_factory=Connection,
             )
@@ -173,25 +173,25 @@ class FirstlookServerModeTests(unittest.TestCase):
             assert server._runner._runner_thread is None
 
             assert server.librecrawl_site_check("https://off-host.example/")["success"] is False
-            assert server.librecrawl_schema_check("https://www.limitlessenterprise.ai/audit?visitor=url")["success"] is False
-            assert server.librecrawl_site_check("https://limitlessenterprise.ai/audit")["success"] is False
+            assert server.librecrawl_schema_check("https://limitlessenterprise.ai/audit?visitor=url")["success"] is False
+            assert server.librecrawl_site_check("https://www.limitlessenterprise.ai/audit")["success"] is False
             assert attempts == []
 
-            site = server.librecrawl_site_check("https://www.limitlessenterprise.ai/audit")
+            site = server.librecrawl_site_check("https://limitlessenterprise.ai/audit")
             assert site["robots_txt"]["found"] is True
             assert site["sitemap"]["found"] is True
             assert site["https_redirect"]["skipped"] is True
             assert site["www_redirect"]["skipped"] is True
 
-            schema = server.librecrawl_schema_check("https://www.limitlessenterprise.ai/audit")
+            schema = server.librecrawl_schema_check("https://limitlessenterprise.ai/audit")
             assert schema["types_found"] == ["Organization"]
             assert all(attempt[1] == PUBLIC_IP for attempt in attempts)
-            assert all(attempt[4] == "www.limitlessenterprise.ai" for attempt in attempts)
+            assert all(attempt[4] == "limitlessenterprise.ai" for attempt in attempts)
             assert all(0 < attempt[5] <= 30 for attempt in attempts)
 
             audit_status["value"] = 302
             failed_schema = server.librecrawl_schema_check(
-                "https://www.limitlessenterprise.ai/audit"
+                "https://limitlessenterprise.ai/audit"
             )
             assert failed_schema["success"] is False
             assert "HTTP 302" in failed_schema["error"]
@@ -203,12 +203,12 @@ class FirstlookServerModeTests(unittest.TestCase):
 
             attempts.clear()
             server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
-                "https://www.limitlessenterprise.ai/audit",
+                "https://limitlessenterprise.ai/audit",
                 resolver=lambda _host, _port: (PUBLIC_IP,),
                 connection_factory=FailingConnection,
             )
             failed_site = server.librecrawl_site_check(
-                "https://www.limitlessenterprise.ai/audit"
+                "https://limitlessenterprise.ai/audit"
             )
             assert failed_site["sitemap"]["found"] is False
             assert "error" in failed_site["sitemap"]
@@ -218,7 +218,7 @@ class FirstlookServerModeTests(unittest.TestCase):
                 def getresponse(self):
                     if self.path == "/robots.txt":
                         declarations = "\n".join(
-                            f"Sitemap: https://www.limitlessenterprise.ai/map-{index}.xml"
+                            f"Sitemap: https://limitlessenterprise.ai/map-{index}.xml"
                             for index in range(50)
                         )
                         return Response(declarations.encode())
@@ -226,12 +226,12 @@ class FirstlookServerModeTests(unittest.TestCase):
 
             attempts.clear()
             server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
-                "https://www.limitlessenterprise.ai/audit",
+                "https://limitlessenterprise.ai/audit",
                 resolver=lambda _host, _port: (PUBLIC_IP,),
                 connection_factory=CappedConnection,
             )
             capped_site = server.librecrawl_site_check(
-                "https://www.limitlessenterprise.ai/audit"
+                "https://limitlessenterprise.ai/audit"
             )
             sitemap_attempts = [
                 attempt for attempt in attempts if attempt[3].endswith(".xml")
@@ -245,28 +245,28 @@ class FirstlookServerModeTests(unittest.TestCase):
                 def getresponse(self):
                     if self.path == "/robots.txt":
                         return Response(
-                            b"Sitemap: https://www.limitlessenterprise.ai/sitemap.xml"
+                            b"Sitemap: https://limitlessenterprise.ai/sitemap.xml"
                         )
                     if self.path == "/sitemap.xml":
                         return Response(
                             b"<sitemapindex><sitemap><loc>"
-                            b"https://www.limitlessenterprise.ai/critical.xml"
+                            b"https://limitlessenterprise.ai/critical.xml"
                             b"</loc></sitemap></sitemapindex>"
                         )
                     if self.path in ("/sitemap_index.xml", "/sitemap-index.xml"):
                         return Response(b"missing", status=404)
                     if self.path == "/critical.xml":
                         urls = (
-                            "https://www.limitlessenterprise.ai/book-call/",
-                            "https://www.limitlessenterprise.ai/blog/growth?utm_source=test",
-                            "https://www.limitlessenterprise.ai/blog/growth?ref=duplicate",
-                            "https://www.limitlessenterprise.ai/download-checklist",
-                            "https://www.limitlessenterprise.ai/services/seo",
-                            "https://www.limitlessenterprise.ai/services/ppc",
-                            "https://www.limitlessenterprise.ai/pricing",
-                            "https://www.limitlessenterprise.ai/case-studies/win",
-                            "https://www.limitlessenterprise.ai/contact",
-                            "https://www.limitlessenterprise.ai/category/news",
+                            "https://limitlessenterprise.ai/book-call/",
+                            "https://limitlessenterprise.ai/blog/growth?utm_source=test",
+                            "https://limitlessenterprise.ai/blog/growth?ref=duplicate",
+                            "https://limitlessenterprise.ai/download-checklist",
+                            "https://limitlessenterprise.ai/services/seo",
+                            "https://limitlessenterprise.ai/services/ppc",
+                            "https://limitlessenterprise.ai/pricing",
+                            "https://limitlessenterprise.ai/case-studies/win",
+                            "https://limitlessenterprise.ai/contact",
+                            "https://limitlessenterprise.ai/category/news",
                             "https://attacker.example/escape",
                             "https://[invalid/",
                         )
@@ -291,12 +291,12 @@ class FirstlookServerModeTests(unittest.TestCase):
             attempts.clear()
             audit_status["value"] = 200
             server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
-                "https://www.limitlessenterprise.ai/audit",
+                "https://limitlessenterprise.ai/audit",
                 resolver=lambda _host, _port: (PUBLIC_IP,),
                 connection_factory=FrontierConnection,
             )
             frontier = server.librecrawl_site_check(
-                "https://www.limitlessenterprise.ai/audit"
+                "https://limitlessenterprise.ai/audit"
             )
             audited_paths = [
                 attempt[3]
@@ -324,10 +324,10 @@ class FirstlookServerModeTests(unittest.TestCase):
                 if page["category"] == "booking"
             )
             assert booking["provenance"] == [
-                "sitemap:https://www.limitlessenterprise.ai/critical.xml"
+                "sitemap:https://limitlessenterprise.ai/critical.xml"
             ]
             assert booking["canonical_url"] == (
-                "https://www.limitlessenterprise.ai/book-call/"
+                "https://limitlessenterprise.ai/book-call/"
             )
             assert any(
                 candidate["url"] == "https://[invalid/"
@@ -336,9 +336,9 @@ class FirstlookServerModeTests(unittest.TestCase):
             )
 
             blocked = (
-                server.librecrawl_audit("https://www.limitlessenterprise.ai/audit"),
+                server.librecrawl_audit("https://limitlessenterprise.ai/audit"),
                 server.librecrawl_generate_report(),
-                server.librecrawl_start_crawl("https://www.limitlessenterprise.ai/audit"),
+                server.librecrawl_start_crawl("https://limitlessenterprise.ai/audit"),
                 server.librecrawl_get_status(),
                 server.librecrawl_export_results(),
                 server.librecrawl_list_crawls(),
@@ -350,20 +350,20 @@ class FirstlookServerModeTests(unittest.TestCase):
                 server.librecrawl_filter_issues([]),
                 server.librecrawl_visualization_data(),
                 server.librecrawl_internal_links_analysis(),
-                server.librecrawl_start_chunked_audit("https://www.limitlessenterprise.ai/audit"),
+                server.librecrawl_start_chunked_audit("https://limitlessenterprise.ai/audit"),
                 server.librecrawl_audit_status("session"),
                 server.librecrawl_audit_artifacts("session"),
                 server.librecrawl_audit_pause("session"),
                 server.librecrawl_audit_resume("session"),
                 server.librecrawl_audit_cancel("session"),
                 server.librecrawl_audit_force_advance("session"),
-                server.librecrawl_full_audit_strict("https://www.limitlessenterprise.ai/audit"),
+                server.librecrawl_full_audit_strict("https://limitlessenterprise.ai/audit"),
                 server.librecrawl_report_content("missing.md"),
                 server.librecrawl_audit_pdf("missing.md"),
-                server.librecrawl_pagespeed("https://www.limitlessenterprise.ai/audit"),
-                server.librecrawl_pagespeed_audit(["https://www.limitlessenterprise.ai/audit"]),
+                server.librecrawl_pagespeed("https://limitlessenterprise.ai/audit"),
+                server.librecrawl_pagespeed_audit(["https://limitlessenterprise.ai/audit"]),
                 server.librecrawl_pagespeed_audit_all_crawl_pages(1),
-                server.librecrawl_schema_audit(["https://www.limitlessenterprise.ai/audit"]),
+                server.librecrawl_schema_audit(["https://limitlessenterprise.ai/audit"]),
                 server.librecrawl_schema_validate(1),
                 server.librecrawl_external_links_audit(1),
                 server.librecrawl_append_gsc_section("missing.md", {}),

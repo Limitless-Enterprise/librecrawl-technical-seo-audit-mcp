@@ -69,8 +69,12 @@ class FirstlookConfigurationTests(unittest.TestCase):
 
         self.assertTrue(enabled)
         self.assertEqual(boundary.approved_url, FIRSTLOOK_APPROVED_URL)
+        self.assertEqual(
+            boundary.authorize_tool_url(FIRSTLOOK_APPROVED_URL),
+            FIRSTLOOK_APPROVED_URL,
+        )
         with self.assertRaises(FirstlookURLRejected):
-            boundary.authorize_tool_url("https://limitlessenterprise.ai/audit")
+            boundary.authorize_tool_url("https://www.limitlessenterprise.ai/audit")
         with self.assertRaises(FirstlookURLRejected):
             boundary.authorize_tool_url("https://attacker.example/")
 

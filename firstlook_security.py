@@ -21,7 +21,7 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 
 FIRSTLOOK_MODE_ENV = "FIRSTLOOK_STAGING_MODE"
-FIRSTLOOK_APPROVED_URL = "https://www.limitlessenterprise.ai/audit"
+FIRSTLOOK_APPROVED_URL = "https://limitlessenterprise.ai/audit"
 
 _TRUE_VALUES = frozenset({"true"})
 _FALSE_VALUES = frozenset({"", "false"})

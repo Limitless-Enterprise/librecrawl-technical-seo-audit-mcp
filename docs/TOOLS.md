@@ -6,7 +6,7 @@ The server exposes **37 MCP tools**. In normal use you never call these by hand 
 
 > **Attended Firstlook staging mode:** only `librecrawl_site_check` and
 > `librecrawl_schema_check` are callable, and their URL must exactly match the
-> hard-coded `https://www.limitlessenterprise.ai/audit` URL. Every other tool
+> hard-coded `https://limitlessenterprise.ai/audit` URL. Every other tool
 > below returns a disabled
 > response. See [FIRSTLOOK-STAGING.md](FIRSTLOOK-STAGING.md).
 

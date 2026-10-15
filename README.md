@@ -445,7 +445,7 @@ All environment variables are optional — the defaults just work. Set them via 
 | `FIRSTLOOK_STAGING_MODE` | `false` | Literal `true`/`false` switch for the attended fixed-domain staging boundary; not a production mode |
 
 The attended Firstlook mode enables site and schema checks only for the
-hard-coded `https://www.limitlessenterprise.ai/audit` target;
+hard-coded `https://limitlessenterprise.ai/audit` target;
 every other MCP tool is disabled. Its threat model and deployment controls are documented in
 [`docs/FIRSTLOOK-STAGING.md`](docs/FIRSTLOOK-STAGING.md).
 

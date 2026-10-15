@@ -107,7 +107,7 @@ You are connected to the attended Firstlook staging boundary. This mode is an
 explicit fixed-domain exception, not a general website-audit service.
 
 Only librecrawl_site_check and librecrawl_schema_check may fetch
-https://www.limitlessenterprise.ai/audit. Their URL argument must normalize to
+https://limitlessenterprise.ai/audit. Their URL argument must normalize to
 that exact URL; it does not select a destination. Requests use HTTPS on port
 443, reject
 credentials/query/fragment, do not follow redirects, reject any non-public DNS

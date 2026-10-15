@@ -31,7 +31,7 @@ from firstlook_security import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APPROVED_HOST = "www.limitlessenterprise.ai"
+APPROVED_HOST = "limitlessenterprise.ai"
 APPROVED_URL = f"https://{APPROVED_HOST}/audit"
 PUBLIC_TEST_ADDRESS = "93.184.216.34"
 RUN_ISOLATION = os.environ.get("FIRSTLOOK_CI_ISOLATION") == "true"
@@ -500,7 +500,7 @@ class FreshInstallIsolationTests(unittest.TestCase):
                                 "librecrawl_site_check",
                                 {
                                     "url": (
-                                        "https://www.limitlessenterprise.ai/"
+                                        "https://limitlessenterprise.ai/"
                                         "audit?visitor=authority"
                                     )
                                 },

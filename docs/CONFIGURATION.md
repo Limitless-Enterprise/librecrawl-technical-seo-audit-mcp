@@ -27,7 +27,7 @@ FIRSTLOOK_STAGING_MODE=true python server.py
 
 Only `librecrawl_site_check` and `librecrawl_schema_check` may fetch the
 approved host. Their URL arguments are checked for exact normalized equality
-with `https://www.limitlessenterprise.ai/audit`; the submitted value never
+with `https://limitlessenterprise.ai/audit`; the submitted value never
 selects a destination and no environment variable can replace the target.
 Every other MCP tool is omitted from the attended protocol surface, including
 full crawls, background-runner recovery, PageSpeed, batch schema checks, stored

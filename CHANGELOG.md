@@ -4,7 +4,7 @@
 
 ### Added
 - Opt-in attended Firstlook staging mode fixed to
-  `https://www.limitlessenterprise.ai/audit`,
+  `https://limitlessenterprise.ai/audit`,
   public-address DNS validation, pinned-IP HTTPS with verified Host/SNI, and
   redirects disabled. Only the site and schema checks are callable in this
   mode; the full crawler and every other MCP tool remain disabled.
