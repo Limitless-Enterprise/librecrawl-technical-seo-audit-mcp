@@ -183,6 +183,42 @@ class FirstlookServerModeTests(unittest.TestCase):
             assert site["https_redirect"]["skipped"] is True
             assert site["www_redirect"]["skipped"] is True
 
+            for status in (302, 404, 503):
+                audit_status["value"] = status
+                incomplete = server.librecrawl_site_check(
+                    "https://limitlessenterprise.ai/audit"
+                )["quick_audit"]
+                assert incomplete["canonical_pages_audited"] == 1
+                assert incomplete["partial"] is True
+                failed_page = next(p for p in incomplete["selected_pages"]
+                                   if p["url"].endswith("/audit"))
+                assert failed_page["status_code"] == status
+                assert failed_page["included"] is False
+                assert incomplete["fetch_errors"][0]["error"] == f"HTTP {status}"
+            class FailedPagesConnection(Connection):
+                def getresponse(self):
+                    if self.path in ("/", "/audit"):
+                        return Response(b"unavailable", status=503)
+                    return super().getresponse()
+
+            server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
+                "https://limitlessenterprise.ai/audit",
+                resolver=lambda _host, _port: (PUBLIC_IP,),
+                connection_factory=FailedPagesConnection,
+            )
+            failed_pages = server.librecrawl_site_check(
+                "https://limitlessenterprise.ai/audit"
+            )["quick_audit"]
+            assert failed_pages["canonical_pages_audited"] == 0
+            assert failed_pages["partial"] is True
+            assert len(failed_pages["fetch_errors"]) == 2
+            server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
+                "https://limitlessenterprise.ai/audit",
+                resolver=lambda _host, _port: (PUBLIC_IP,),
+                connection_factory=Connection,
+            )
+            audit_status["value"] = 200
+
             schema = server.librecrawl_schema_check("https://limitlessenterprise.ai/audit")
             assert schema["types_found"] == ["Organization"]
             assert all(attempt[1] == PUBLIC_IP for attempt in attempts)

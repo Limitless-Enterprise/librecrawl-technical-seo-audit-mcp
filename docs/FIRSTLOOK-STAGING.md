@@ -109,9 +109,9 @@ python -m unittest discover -v
 The pull-request-only isolation job additionally drives the production pinned
 connector through a real TLS socket on TCP 443 with a controlled public address,
 verified Host/SNI/certificate identity, simulated rebinding, and same-host and
-off-host redirect responses. It also installs the exact checkout into a clean
+off-host redirect responses. It also downloads and installs the pinned revision into a clean
 external directory from the authorized Limitless Enterprise fork pinned at
-`fa16b4528511f301822e8455b915ecfdff095715`, rejects any other module source,
+`feecb119e7acbc8c611737bfd6c501eb24a28039`, rejects any other module source,
 and initializes the installed MCP server over stdio. These checks are opt-in
 because they require a disposable root-capable Linux runner and a fresh
 dependency environment.

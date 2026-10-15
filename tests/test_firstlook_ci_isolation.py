@@ -8,7 +8,6 @@ clean virtual-environment install. CI enables them on a disposable runner with
 
 from __future__ import annotations
 
-import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
@@ -38,27 +37,8 @@ RUN_ISOLATION = os.environ.get("FIRSTLOOK_CI_ISOLATION") == "true"
 MCP_SOURCE_BASE_URL = (
     "https://raw.githubusercontent.com/Limitless-Enterprise/"
     "librecrawl-technical-seo-audit-mcp/"
-    "fa16b4528511f301822e8455b915ecfdff095715"
+    "feecb119e7acbc8c611737bfd6c501eb24a28039"
 )
-MODULES = (
-    "server.py",
-    "firstlook_security.py",
-    "state.py",
-    "libreclient.py",
-    "runner.py",
-    "external_links.py",
-    "content_audit.py",
-    "extended_checks.py",
-    "schema_validator.py",
-    "sitemap_fill.py",
-    "pdf_report.py",
-)
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 @unittest.skipUnless(
     RUN_ISOLATION
     and sys.platform.startswith("linux")
@@ -348,7 +328,7 @@ class FirstlookSocketIsolationTests(unittest.TestCase):
 class FreshInstallIsolationTests(unittest.TestCase):
     """Install from empty state and drive the installed server over MCP stdio."""
 
-    def test_clean_install_starts_exact_checkout_with_mcp_v1(self):
+    def test_clean_install_starts_pinned_revision_with_mcp_v1(self):
         with tempfile.TemporaryDirectory() as temporary_directory:
             temporary = Path(temporary_directory)
             install_directory = temporary / "install"
@@ -387,6 +367,8 @@ class FreshInstallIsolationTests(unittest.TestCase):
             )
             for name in ("git", "pm2", "sleep", "sudo", "uvx"):
                 self._write_stub(binary_directory / name, "exit 0")
+            real_curl = shutil.which("curl")
+            self.assertIsNotNone(real_curl)
             self._write_stub(
                 binary_directory / "curl",
                 """
@@ -400,19 +382,14 @@ class FreshInstallIsolationTests(unittest.TestCase):
                 done
                 if [[ -z "$output" || "$output" == "/dev/null" ]]; then exit 0; fi
                 if [[ "$url" != "$EXPECTED_MCP_SOURCE_BASE_URL/"* ]]; then exit 22; fi
-                mkdir -p "$(dirname "$output")"
-                if [[ "$url" == */SKILL.md ]]; then
-                  printf '%s\n' '# installed test skill' > "$output"
-                else
-                  cp "$FIRSTLOOK_SOURCE_ROOT/${url##*/}" "$output"
-                fi
+                exec "$FIRSTLOOK_REAL_CURL" -fsSL "$url" -o "$output"
                 """,
             )
 
             environment = os.environ.copy()
             environment.update(
                 {
-                    "FIRSTLOOK_SOURCE_ROOT": str(ROOT),
+                    "FIRSTLOOK_REAL_CURL": real_curl,
                     "EXPECTED_MCP_SOURCE_BASE_URL": MCP_SOURCE_BASE_URL,
                     "HOME": str(temporary / "home"),
                     "INSTALL_DIR": str(install_directory),
@@ -440,13 +417,6 @@ class FreshInstallIsolationTests(unittest.TestCase):
             )
 
             mcp_directory = install_directory / "mcp-server"
-            for module in MODULES:
-                with self.subTest(module=module):
-                    self.assertEqual(
-                        _sha256(mcp_directory / module),
-                        _sha256(ROOT / module),
-                    )
-
             installed_python = mcp_directory / "venv" / "bin" / "python3"
             version_result = subprocess.run(
                 [
@@ -521,6 +491,18 @@ class FreshInstallIsolationTests(unittest.TestCase):
 
                 asyncio.run(main())
             '''
+            target_check = subprocess.run(
+                [str(installed_python), "-c",
+                 "from firstlook_security import load_firstlook_boundary; "
+                 "b = load_firstlook_boundary({'FIRSTLOOK_STAGING_MODE': 'true'})[1]; "
+                 "assert b.authorize_tool_url('https://limitlessenterprise.ai/audit') == 'https://limitlessenterprise.ai/audit'; "
+                 "b.authorize_tool_url('https://www.limitlessenterprise.ai/audit')"],
+                cwd=mcp_directory, env={**environment, "PYTHONPATH": ""},
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertNotEqual(target_check.returncode, 0)
+            self.assertIn("tool URL does not exactly match", target_check.stderr)
+
             product_environment = {
                 **environment,
                 "PYTHONPATH": "",

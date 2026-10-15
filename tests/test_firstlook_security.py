@@ -1,5 +1,7 @@
 import socket
 import ssl
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -276,6 +278,73 @@ class PinnedTransportTests(unittest.TestCase):
                 boundary.get("https://audit.example/", deadline=105)
         self.assertEqual(len(attempts), 1)
 
+    def test_deadline_bounds_dns_without_starting_connections(self):
+        release = threading.Event()
+        factory = mock.Mock()
+        boundary = FirstlookBoundary(
+            "https://audit.example/",
+            resolver=lambda *_: (release.wait(2), (PUBLIC_V4,))[1],
+            connection_factory=factory,
+        )
+        started = time.monotonic()
+        try:
+            with self.assertRaisesRegex(FirstlookFetchError, "deadline exceeded"):
+                boundary.get("https://audit.example/", deadline=started + 0.1)
+            self.assertLess(time.monotonic() - started, 1)
+            factory.assert_not_called()
+        finally:
+            release.set()
+
+    def test_deadline_interrupts_dripping_headers_body_and_tls(self):
+        for phase in ("headers", "body", "tls"):
+            with self.subTest(phase=phase):
+                client, peer = socket.socketpair()
+                stopped = threading.Event()
+                context = mock.Mock()
+                transport = mock.Mock(wraps=client)
+                if phase == "tls":
+                    transport.do_handshake = lambda: client.recv(1)
+                else:
+                    transport.do_handshake = lambda: None
+                context.wrap_socket.return_value = transport
+
+                def serve():
+                    try:
+                        if phase == "tls":
+                            stopped.wait(2)
+                            return
+                        peer.recv(4096)
+                        if phase == "body":
+                            peer.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n")
+                        else:
+                            peer.sendall(b"HTTP/1.1 200 OK\r\nX-Slow: ")
+                        while not stopped.wait(0.02):
+                            peer.sendall(b"a")
+                    except OSError:
+                        pass
+                    finally:
+                        peer.close()
+
+                worker = threading.Thread(target=serve, daemon=True)
+                worker.start()
+                boundary = FirstlookBoundary(
+                    "https://audit.example/",
+                    resolver=lambda *_: (PUBLIC_V4,),
+                    connection_factory=lambda host, ip, timeout: PinnedHTTPSConnection(
+                        host, ip, timeout=timeout, context=context
+                    ),
+                )
+                started = time.monotonic()
+                try:
+                    with mock.patch("firstlook_security.socket.create_connection", return_value=client):
+                        with self.assertRaisesRegex(FirstlookFetchError, "deadline exceeded"):
+                            boundary.get("https://audit.example/", deadline=started + 0.15)
+                    self.assertLess(time.monotonic() - started, 1)
+                finally:
+                    stopped.set()
+                    client.close()
+                    worker.join(1)
+
     def test_rejected_input_and_dns_answers_make_no_outbound_request(self):
         attempts = []
 
@@ -349,7 +418,7 @@ class PinnedTransportTests(unittest.TestCase):
             (PUBLIC_V4, 443), timeout=3, source_address=None
         )
         context.wrap_socket.assert_called_once_with(
-            raw_socket, server_hostname="audit.example"
+            raw_socket, server_hostname="audit.example", do_handshake_on_connect=False
         )
         self.assertIs(connection.sock, tls_socket)
 

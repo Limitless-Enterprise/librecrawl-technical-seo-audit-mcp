@@ -208,7 +208,8 @@ mkdir -p "${MCP_DIR}"
 # Server-side instructions + ephemeral mode + 37 tools all need these files.
 info "Downloading MCP server modules from GitHub (11 files)..."
 MCP_SOURCE_REPOSITORY="Limitless-Enterprise/librecrawl-technical-seo-audit-mcp"
-MCP_SOURCE_COMMIT="fa16b4528511f301822e8455b915ecfdff095715"
+MCP_SOURCE_COMMIT="feecb119e7acbc8c611737bfd6c501eb24a28039"
+[[ "$MCP_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]] || err "MCP source requires an immutable commit"
 BASE_URL="https://raw.githubusercontent.com/${MCP_SOURCE_REPOSITORY}/${MCP_SOURCE_COMMIT}"
 for f in server.py firstlook_security.py state.py libreclient.py runner.py external_links.py \
          content_audit.py extended_checks.py schema_validator.py \

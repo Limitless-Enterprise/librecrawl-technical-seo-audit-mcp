@@ -13,9 +13,11 @@ from dataclasses import dataclass
 import http.client
 import ipaddress
 import os
+import queue
 import socket
 import ssl
 import time
+import threading
 from typing import Callable, Mapping, Sequence
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
@@ -125,20 +127,45 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
             context=context or ssl.create_default_context(),
         )
         self.pinned_ip = pinned_ip
+        self.deadline = None
+        self._transport_socket = None
+
+    def abort(self) -> None:
+        transport = self._transport_socket
+        if transport is not None:
+            try:
+                transport.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    def _check_deadline(self) -> None:
+        if self.deadline is not None and time.monotonic() >= self.deadline:
+            self.abort()
+            raise FirstlookFetchError("request deadline exceeded")
 
     def connect(self) -> None:
+        self._check_deadline()
         # Do not call HTTPSConnection.connect(): it resolves self.host again.
         raw_socket = socket.create_connection(
             (self.pinned_ip, 443),
-            timeout=self.timeout,
+            timeout=(min(self.timeout, max(0.001, self.deadline - time.monotonic()))
+                     if self.deadline is not None else self.timeout),
             source_address=self.source_address,
         )
+        self._transport_socket = raw_socket
         try:
+            self._check_deadline()
             # self.host is the approved DNS name, not the pinned numeric peer.
             # create_default_context() keeps hostname and certificate checks on.
-            self.sock = self._context.wrap_socket(raw_socket, server_hostname=self.host)
+            self.sock = self._context.wrap_socket(
+                raw_socket, server_hostname=self.host, do_handshake_on_connect=False
+            )
+            self._transport_socket = self.sock
+            self._check_deadline()
+            self.sock.do_handshake()
         except Exception:
             raw_socket.close()
+            self.close()
             raise
 
 
@@ -345,7 +372,27 @@ class FirstlookBoundary:
     ) -> PinnedResponse:
         """GET one same-host URL without redirect handling or a second DNS lookup."""
         target = self.validate_same_host_url(url)
-        addresses = tuple(self._resolver(target.hostname, 443))
+        if deadline is None:
+            addresses = tuple(self._resolver(target.hostname, 443))
+        else:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FirstlookFetchError("request deadline exceeded")
+            resolved = queue.Queue(maxsize=1)
+
+            def resolve():
+                try:
+                    resolved.put((tuple(self._resolver(target.hostname, 443)), None))
+                except Exception as exc:
+                    resolved.put((None, exc))
+
+            threading.Thread(target=resolve, daemon=True).start()
+            try:
+                addresses, error = resolved.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise FirstlookFetchError("request deadline exceeded during DNS") from exc
+            if error is not None:
+                raise error
         if not addresses:
             raise FirstlookDNSRejected(
                 f"DNS returned no A or AAAA addresses for {target.hostname}"
@@ -393,10 +440,19 @@ class FirstlookBoundary:
             connection = self._connection_factory(
                 target.hostname, pinned_ip, attempt_timeout
             )
+            timer = None
+            if deadline is not None:
+                connection.deadline = deadline
+                abort = getattr(connection, "abort", connection.close)
+                timer = threading.Timer(max(0, deadline - time.monotonic()), abort)
+                timer.daemon = True
+                timer.start()
             try:
                 connection.request("GET", target.path, headers=request_headers)
                 response = connection.getresponse()
                 body = response.read(self._max_body_bytes + 1)
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise FirstlookFetchError("request deadline exceeded")
                 if len(body) > self._max_body_bytes:
                     raise FirstlookFetchError(
                         f"response exceeded {self._max_body_bytes} byte limit"
@@ -414,8 +470,12 @@ class FirstlookBoundary:
             except FirstlookFetchError:
                 raise
             except Exception as exc:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise FirstlookFetchError("request deadline exceeded") from exc
                 failures.append(f"{pinned_ip}: {type(exc).__name__}: {exc}")
             finally:
+                if timer is not None:
+                    timer.cancel()
                 connection.close()
 
         detail = "; ".join(failures) or "no connection attempts"

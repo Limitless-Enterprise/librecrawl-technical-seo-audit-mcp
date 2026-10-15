@@ -747,19 +747,28 @@ def _firstlook_site_check(base_url: str) -> dict:
             "status_code": response.status_code,
             "redirect_not_followed": 300 <= response.status_code < 400,
         }
+        if response.status_code != 200:
+            page["included"] = False
+            audited_pages.append(page)
+            page_fetch_errors.append({
+                "url": candidate["url"],
+                "category": candidate["category"],
+                "provenance": candidate["provenance"],
+                "error": f"HTTP {response.status_code}",
+            })
+            continue
         canonical_url = candidate["url"]
-        if response.status_code == 200:
-            extractor = _FirstlookPageExtractor()
-            extractor.feed(response.text)
-            page["title"] = " ".join(extractor.title.split())
-            page["h1"] = " ".join(extractor.h1.split())
-            if extractor.canonical:
-                try:
-                    canonical_url = _firstlook_candidate_url(
-                        extractor.canonical, candidate["url"]
-                    )
-                except FirstlookBoundaryError as exc:
-                    page["canonical_rejected"] = str(exc)
+        extractor = _FirstlookPageExtractor()
+        extractor.feed(response.text)
+        page["title"] = " ".join(extractor.title.split())
+        page["h1"] = " ".join(extractor.h1.split())
+        if extractor.canonical:
+            try:
+                canonical_url = _firstlook_candidate_url(
+                    extractor.canonical, candidate["url"]
+                )
+            except FirstlookBoundaryError as exc:
+                page["canonical_rejected"] = str(exc)
         page["canonical_url"] = canonical_url
         canonical_key = _firstlook_template_key(
             canonical_url, _firstlook_page_category(canonical_url, root)
