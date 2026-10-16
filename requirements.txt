@@ -1,6 +1,7 @@
 # librecrawl-technical-seo-audit-mcp — runtime dependencies
 # The MCP server itself. Everything else in the codebase is Python stdlib.
-mcp>=1.2.0
+# server.py uses the FastMCP v1 API. MCP 2.x renamed and changed that API.
+mcp>=1.2.0,<2
 httpx>=0.27
 uvicorn>=0.30
 # PDF report pipeline (pdf_report.py): Markdown -> HTML -> PDF

@@ -14,6 +14,19 @@ Everything is configured through environment variables. All are optional — the
 | `REPORTS_DIR` | `~/librecrawl-reports` | Directory where audit zips are written. Docker mounts this to `./reports`. |
 | `LIBRECRAWL_UPSTREAM_DB` | `~/.librecrawl/upstream/users.db` | Path to LibreCrawl's SQLite file, used for orphan-page and cleanup checks. If the file isn't reachable, those specific checks skip gracefully — the core audit is unaffected. |
 | `PAGESPEED_API_KEY` | unset | Google PageSpeed Insights API key. Enables the `librecrawl_pagespeed*` tools and raises PSI rate limits (25k/day). |
+| `FIRSTLOOK_STAGING_MODE` | `false` | Opts into the [attended staging boundary](FIRSTLOOK-STAGING.md#fail-closed-configuration); see its fail-closed configuration contract. |
+
+## Attended Firstlook staging mode
+
+Start the attended mode from a reviewed fork checkout:
+
+```sh
+FIRSTLOOK_STAGING_MODE=true python server.py
+```
+
+See [`FIRSTLOOK-STAGING.md`](FIRSTLOOK-STAGING.md) for the authoritative
+configuration contract, tool restrictions, threat model, rollout, rollback,
+and deployment-evidence requirements.
 
 ## Transports
 
@@ -63,6 +76,7 @@ environment:
   - REPORTS_DIR=/reports
   - LIBRECRAWL_UPSTREAM_DB=/librecrawl-data/users.db
   - PAGESPEED_API_KEY=${PAGESPEED_API_KEY:-}
+  - FIRSTLOOK_STAGING_MODE=${FIRSTLOOK_STAGING_MODE-false}
 ```
 
 Pass a PageSpeed key by putting `PAGESPEED_API_KEY=...` in a `.env` file next to `docker-compose.yml` (copy `.env.example`). The MCP port is published on loopback only (`127.0.0.1:5081`); change the port mapping in `docker-compose.yml` to expose it elsewhere.

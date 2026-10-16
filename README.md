@@ -151,6 +151,10 @@ You don't need to be. If you can:
 
 > **Three ways to run:** the **one-liner** above (guided installer) · **[Docker](#-run-the-full-stack-with-docker-recommended-for-self-hosting)** (full stack, one command — best for self-hosting/VPS) · **[manual](#-manual-install)** (Python venv + your own backend). New here? Start with the one-liner.
 
+For the attended Firstlook delivery, use the [reviewed fork installation
+procedure](docs/FIRSTLOOK-STAGING.md#attended-installation) instead of the
+upstream installation commands on this page.
+
 ### 🐳 Run the full stack with Docker (recommended for self-hosting)
 
 Brings up **both** the LibreCrawl engine and the MCP server, wired together and health-gated, with one command. Requires Docker + Docker Compose.
@@ -442,6 +446,10 @@ All environment variables are optional — the defaults just work. Set them via 
 | `REPORTS_DIR` | `~/librecrawl-reports` | Where audit zips land |
 | `LIBRECRAWL_UPSTREAM_DB` | `~/.librecrawl/upstream/users.db` | LibreCrawl's SQLite, for orphan/cleanup checks (degrades gracefully if absent) |
 | `PAGESPEED_API_KEY` | unset | Optional — enables `librecrawl_pagespeed*` (raises PSI limits) |
+| `FIRSTLOOK_STAGING_MODE` | `false` | Opts into the [attended staging boundary](docs/FIRSTLOOK-STAGING.md#fail-closed-configuration) |
+
+For attended Firstlook usage, follow the authoritative boundary and deployment
+controls in [`docs/FIRSTLOOK-STAGING.md`](docs/FIRSTLOOK-STAGING.md).
 
 📖 Full reference, per-client config, and transport details: **[docs/CONFIGURATION.md](docs/CONFIGURATION.md)**.
 
@@ -484,6 +492,7 @@ Deeper guides live in [`docs/`](docs/):
 |---|---|
 | **[Getting Started](docs/GETTING-STARTED.md)** | Install every way (one-liner · Docker · manual), per-client config for Claude Code/Desktop, Cursor, Windsurf, Codex, Continue.dev, and your first audit end-to-end |
 | **[Configuration](docs/CONFIGURATION.md)** | Every environment variable, HTTP vs stdio transport, ports, reports directory, PageSpeed key |
+| **[Firstlook staging boundary](docs/FIRSTLOOK-STAGING.md)** | Fixed-domain threat model, disabled paths, rollout, rollback, and immutable deployment evidence |
 | **[Tools Reference](docs/TOOLS.md)** | All 37 MCP tools — signatures, arguments, when to use each |
 | **[Architecture](docs/ARCHITECTURE.md)** | How the wrapper, background worker, AIMD controller, and LibreCrawl backend fit together |
 | **[Troubleshooting](docs/TROUBLESHOOTING.md)** | Common errors and fixes — backend unreachable, empty audits, PDF/WeasyPrint, Docker health, big-site tuning |
