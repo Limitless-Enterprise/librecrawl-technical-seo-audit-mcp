@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MCP_SOURCE_BASE_URL = (
     "https://raw.githubusercontent.com/Limitless-Enterprise/"
     "librecrawl-technical-seo-audit-mcp/"
-    "feecb119e7acbc8c611737bfd6c501eb24a28039"
+    "5f6608f47d0529eeef87562899fccbc1d448c928"
 )
 
 

@@ -116,7 +116,7 @@ connector through a real TLS socket on TCP 443 with a controlled public address,
 verified Host/SNI/certificate identity, simulated rebinding, and same-host and
 off-host redirect responses. It also downloads and installs the pinned revision into a clean
 external directory from the authorized Limitless Enterprise fork pinned at
-`feecb119e7acbc8c611737bfd6c501eb24a28039`, rejects any other module source,
+`5f6608f47d0529eeef87562899fccbc1d448c928`, rejects any other module source,
 runs the deadline and coverage regressions against the installed modules,
 and initializes the installed MCP server over stdio. These checks are opt-in
 because they require a disposable root-capable Linux runner and a fresh

@@ -37,7 +37,7 @@ RUN_ISOLATION = os.environ.get("FIRSTLOOK_CI_ISOLATION") == "true"
 MCP_SOURCE_BASE_URL = (
     "https://raw.githubusercontent.com/Limitless-Enterprise/"
     "librecrawl-technical-seo-audit-mcp/"
-    "feecb119e7acbc8c611737bfd6c501eb24a28039"
+    "5f6608f47d0529eeef87562899fccbc1d448c928"
 )
 @unittest.skipUnless(
     RUN_ISOLATION
