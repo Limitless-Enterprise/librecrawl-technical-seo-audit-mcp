@@ -13,12 +13,21 @@ ROOT = Path(__file__).resolve().parents[1]
 MCP_SOURCE_BASE_URL = (
     "https://raw.githubusercontent.com/Limitless-Enterprise/"
     "librecrawl-technical-seo-audit-mcp/"
-    "5f6608f47d0529eeef87562899fccbc1d448c928"
+    "0baed260597c92ce05f9268fd8e97a8d1029ff35"
 )
 
 
 @unittest.skipUnless(shutil.which("docker"), "requires Docker Compose")
 class ComposeConfigurationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        result = subprocess.run(
+            ["docker", "compose", "version"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            raise unittest.SkipTest("Docker Compose is unavailable on PATH")
+
     def test_mode_preserves_absent_empty_and_literal_values(self):
         from firstlook_security import FirstlookConfigurationError, load_firstlook_boundary
 
