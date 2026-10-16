@@ -1,3 +1,4 @@
+import os
 import socket
 import ssl
 import threading
@@ -60,6 +61,13 @@ def dns_answer(address):
 class FirstlookConfigurationTests(unittest.TestCase):
     def test_mode_is_explicit_opt_in(self):
         self.assertEqual(load_firstlook_boundary({}), (False, None))
+
+    def test_present_empty_mode_fails_closed(self):
+        with self.assertRaises(FirstlookConfigurationError):
+            load_firstlook_boundary({"FIRSTLOOK_STAGING_MODE": ""})
+        with mock.patch.dict(os.environ, {"FIRSTLOOK_STAGING_MODE": ""}, clear=True):
+            with self.assertRaises(FirstlookConfigurationError):
+                load_firstlook_boundary()
 
     def test_enabled_mode_uses_only_hard_coded_approved_url(self):
         enabled, boundary = load_firstlook_boundary(

@@ -80,38 +80,63 @@ class FirstlookServerModeTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
 
-    def test_general_mode_remains_the_default(self):
-        with tempfile.TemporaryDirectory(dir=REPO_ROOT) as temp_dir:
-            env = os.environ.copy()
-            env.pop("FIRSTLOOK_APPROVED_URL", None)
-            env.update(
-                {
-                    "FIRSTLOOK_STAGING_MODE": "false",
-                    "LIBRECRAWL_STATE_DB": str(Path(temp_dir) / "state.db"),
-                    "REPORTS_DIR": str(Path(temp_dir) / "reports"),
-                }
-            )
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    "-c",
-                    (
-                        "import server; "
-                        "assert server.FIRSTLOOK_STAGING_MODE is False; "
-                        "assert server.FIRSTLOOK_BOUNDARY is None; "
-                        "assert server._runner._runner_thread.is_alive(); "
-                        "server._runner.stop_runner()"
-                    ),
-                ],
-                cwd=REPO_ROOT,
-                env=env,
-                text=True,
-                capture_output=True,
-                timeout=30,
-                check=False,
-            )
+    def test_empty_mode_rejects_startup_before_runner_recovery(self):
+        result = self.run_server_script(
+            r'''
+            import os
+            import sys
+            from unittest import mock
+            from firstlook_security import FirstlookConfigurationError
 
+            os.environ["FIRSTLOOK_STAGING_MODE"] = ""
+            with mock.patch("runner.start_runner") as start_runner:
+                try:
+                    import server
+                except FirstlookConfigurationError:
+                    pass
+                else:
+                    raise AssertionError("empty mode started the server")
+                start_runner.assert_not_called()
+                assert "server" not in sys.modules
+            '''
+        )
         self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+
+    def test_general_mode_remains_the_default(self):
+        for mode in (None, "false"):
+            with tempfile.TemporaryDirectory(dir=REPO_ROOT) as temp_dir:
+                env = os.environ.copy()
+                env.pop("FIRSTLOOK_APPROVED_URL", None)
+                env.update(
+                    {
+                        "LIBRECRAWL_STATE_DB": str(Path(temp_dir) / "state.db"),
+                        "REPORTS_DIR": str(Path(temp_dir) / "reports"),
+                    }
+                )
+                env.pop("FIRSTLOOK_STAGING_MODE", None)
+                if mode is not None:
+                    env["FIRSTLOOK_STAGING_MODE"] = mode
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        "-c",
+                        (
+                            "import server; "
+                            "assert server.FIRSTLOOK_STAGING_MODE is False; "
+                            "assert server.FIRSTLOOK_BOUNDARY is None; "
+                            "assert server._runner._runner_thread.is_alive(); "
+                            "server._runner.stop_runner()"
+                        ),
+                    ],
+                    cwd=REPO_ROOT,
+                    env=env,
+                    text=True,
+                    capture_output=True,
+                    timeout=30,
+                    check=False,
+                )
+
+            self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
 
     def test_schema_default_deadline_bounds_dns(self):
         result = self.run_server_script(

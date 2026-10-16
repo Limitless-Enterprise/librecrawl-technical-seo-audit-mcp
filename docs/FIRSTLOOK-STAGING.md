@@ -29,7 +29,10 @@ The attended target is fixed in code. The only configuration switch is:
 FIRSTLOOK_STAGING_MODE=true
 ```
 
-The switch accepts only literal `true`, literal `false`, or an unset value.
+The switch accepts only literal `true`, literal `false`, or an absent key.
+An explicitly present but empty value is incomplete configuration and rejects
+startup before crawler recovery or tool registration. Docker Compose preserves
+empty values so they are rejected by the same configuration boundary.
 
 The only authorized tool URL is
 `https://limitlessenterprise.ai/audit`. It has:

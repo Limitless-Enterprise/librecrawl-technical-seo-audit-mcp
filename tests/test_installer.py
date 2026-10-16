@@ -1,4 +1,6 @@
+import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,44 @@ MCP_SOURCE_BASE_URL = (
     "librecrawl-technical-seo-audit-mcp/"
     "5f6608f47d0529eeef87562899fccbc1d448c928"
 )
+
+
+@unittest.skipUnless(shutil.which("docker"), "requires Docker Compose")
+class ComposeConfigurationTests(unittest.TestCase):
+    def test_mode_preserves_absent_empty_and_literal_values(self):
+        from firstlook_security import FirstlookConfigurationError, load_firstlook_boundary
+
+        with tempfile.TemporaryDirectory(dir=ROOT) as temporary_directory:
+            empty_env = Path(temporary_directory) / "empty.env"
+            empty_env.write_text("")
+            for value in (None, "", "true", "false"):
+                with self.subTest(value=value):
+                    environment = os.environ.copy()
+                    environment.pop("FIRSTLOOK_STAGING_MODE", None)
+                    if value is not None:
+                        environment["FIRSTLOOK_STAGING_MODE"] = value
+                    result = subprocess.run(
+                        ["docker", "compose", "--env-file", str(empty_env),
+                         "-f", str(ROOT / "docker-compose.yml"),
+                         "config", "--format", "json"],
+                        cwd=ROOT, env=environment,
+                        capture_output=True, text=True, timeout=30,
+                    )
+                    self.assertEqual(result.returncode, 0, msg=result.stderr)
+                    configured = json.loads(result.stdout)["services"]["mcp"]["environment"]
+                    self.assertEqual(configured["FIRSTLOOK_STAGING_MODE"],
+                                     "false" if value is None else value)
+                    if value == "":
+                        with self.assertRaises(FirstlookConfigurationError):
+                            load_firstlook_boundary(configured)
+                    else:
+                        enabled, boundary = load_firstlook_boundary(configured)
+                        self.assertEqual(enabled, value == "true")
+                        if enabled:
+                            self.assertEqual(boundary.approved_url,
+                                             "https://limitlessenterprise.ai/audit")
+                        else:
+                            self.assertIsNone(boundary)
 
 
 class InstallerTests(unittest.TestCase):

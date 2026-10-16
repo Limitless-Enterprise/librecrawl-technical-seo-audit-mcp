@@ -27,7 +27,7 @@ FIRSTLOOK_APPROVED_URL = "https://limitlessenterprise.ai/audit"
 FIRSTLOOK_REQUEST_SECONDS = 30.0
 
 _TRUE_VALUES = frozenset({"true"})
-_FALSE_VALUES = frozenset({"", "false"})
+_FALSE_VALUES = frozenset({"false"})
 _INTERNAL_HOST_SUFFIXES = (
     ".corp",
     ".home",
@@ -176,7 +176,7 @@ ConnectionFactory = Callable[[str, str, float], http.client.HTTPSConnection]
 
 def parse_firstlook_mode(environ: Mapping[str, str] | None = None) -> bool:
     env = os.environ if environ is None else environ
-    raw = str(env.get(FIRSTLOOK_MODE_ENV, ""))
+    raw = str(env.get(FIRSTLOOK_MODE_ENV, "false"))
     if raw in _TRUE_VALUES:
         return True
     if raw in _FALSE_VALUES:

@@ -86,7 +86,7 @@ environment:
   - REPORTS_DIR=/reports
   - LIBRECRAWL_UPSTREAM_DB=/librecrawl-data/users.db
   - PAGESPEED_API_KEY=${PAGESPEED_API_KEY:-}
-  - FIRSTLOOK_STAGING_MODE=${FIRSTLOOK_STAGING_MODE:-false}
+  - FIRSTLOOK_STAGING_MODE=${FIRSTLOOK_STAGING_MODE-false}
 ```
 
 Pass a PageSpeed key by putting `PAGESPEED_API_KEY=...` in a `.env` file next to `docker-compose.yml` (copy `.env.example`). The MCP port is published on loopback only (`127.0.0.1:5081`); change the port mapping in `docker-compose.yml` to expose it elsewhere.
