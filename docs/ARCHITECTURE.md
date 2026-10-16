@@ -21,6 +21,9 @@ flowchart TD
     E -->|HTTP :5080| F["LibreCrawl Flask backend — single-tenant"]
 ```
 
+This describes general mode. For the attended exception, see the authoritative
+[Firstlook boundary and outbound-path inventory](FIRSTLOOK-STAGING.md).
+
 ## Components
 
 ### `server.py` — the MCP surface

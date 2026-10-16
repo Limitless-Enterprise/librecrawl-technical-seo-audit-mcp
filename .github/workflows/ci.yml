@@ -32,8 +32,7 @@ jobs:
       - name: Install runtime dependencies
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: "1"
-        # main still permits MCP 2.x even though server.py uses FastMCP v1.
-        # Keep CI runnable until the pending hardening PR lands its mcp<2 pin.
+        # server.py requires the FastMCP v1 API.
         run: python -m pip install "mcp<2" --requirement requirements.txt
 
       - name: Validate shell syntax

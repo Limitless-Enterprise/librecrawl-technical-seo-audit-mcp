@@ -14,29 +14,19 @@ Everything is configured through environment variables. All are optional — the
 | `REPORTS_DIR` | `~/librecrawl-reports` | Directory where audit zips are written. Docker mounts this to `./reports`. |
 | `LIBRECRAWL_UPSTREAM_DB` | `~/.librecrawl/upstream/users.db` | Path to LibreCrawl's SQLite file, used for orphan-page and cleanup checks. If the file isn't reachable, those specific checks skip gracefully — the core audit is unaffected. |
 | `PAGESPEED_API_KEY` | unset | Google PageSpeed Insights API key. Enables the `librecrawl_pagespeed*` tools and raises PSI rate limits (25k/day). |
-| `FIRSTLOOK_STAGING_MODE` | `false` | Explicitly enables the attended Firstlook fixed-domain boundary. Only literal `true`, literal `false`, or unset are accepted. This is not a production mode. |
+| `FIRSTLOOK_STAGING_MODE` | `false` | Opts into the [attended staging boundary](FIRSTLOOK-STAGING.md#fail-closed-configuration); see its fail-closed configuration contract. |
 
 ## Attended Firstlook staging mode
 
-This opt-in mode is a bounded staging exception, not a hardened public audit
-service. It has one hard-coded target:
+Start the attended mode from a reviewed fork checkout:
 
 ```sh
 FIRSTLOOK_STAGING_MODE=true python server.py
 ```
 
-Only `librecrawl_site_check` and `librecrawl_schema_check` may fetch the
-approved host. Their URL arguments are checked for exact normalized equality
-with `https://limitlessenterprise.ai/audit`; the submitted value never
-selects a destination and no environment variable can replace the target.
-Every other MCP tool is omitted from the attended protocol surface, including
-full crawls, background-runner recovery, PageSpeed, batch schema checks, stored
-results, maintenance controls, external-link validation, and PDF rendering.
-Direct Python calls remain guarded and return a Firstlook-disabled response.
-
-Do not expose this as public automatic audit generation. See
-[`FIRSTLOOK-STAGING.md`](FIRSTLOOK-STAGING.md) for the threat model, rollout,
-rollback, disabled-path inventory, and deployment-evidence requirements.
+See [`FIRSTLOOK-STAGING.md`](FIRSTLOOK-STAGING.md) for the authoritative
+configuration contract, tool restrictions, threat model, rollout, rollback,
+and deployment-evidence requirements.
 
 ## Transports
 

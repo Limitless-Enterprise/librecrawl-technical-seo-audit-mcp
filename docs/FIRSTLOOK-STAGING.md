@@ -42,7 +42,7 @@ The only authorized tool URL is
 - no username or password;
 - no query string;
 - no fragment;
-- a public, non-internal hostname or a public literal IP.
+- the fixed hostname shown above; public literal IPs are not alternative tool targets.
 
 The tool-call URL is normalized and must equal that exact hard-coded URL. It is
 never treated as authority to choose another host or path, and an environment
@@ -82,6 +82,10 @@ its discovery provenance, category, and HTTP status. Successfully fetched pages
 also record their canonical result and whether they were included after
 deduplication. Coverage is marked partial when a deadline,
 document/page limit, or fetch failure prevents complete bounded coverage.
+Non-200 selected pages retain their status records but are excluded from
+`canonical_pages_audited`. Failed explicitly declared or index-child sitemap
+documents also make coverage partial; a conventional-path probe returning 404
+does not by itself imply incomplete coverage.
 External links are never followed. HTTP and alternate-host canonicalization
 checks are intentionally skipped because they would cross the staging boundary.
 
@@ -106,6 +110,16 @@ checks are intentionally skipped because they would cross the staging boundary.
 None of the disabled paths should be described as secured. They remain
 production-hardening dependencies.
 
+## Attended installation
+
+Use a reviewed checkout of
+`Limitless-Enterprise/librecrawl-technical-seo-audit-mcp`, not the upstream
+`main` installation commands in the general getting-started guides. From that
+checkout, run `bash install.sh`. The installer downloads MCP modules from its
+fixed immutable fork revision and fails if a download is unavailable. It does
+not enable attended mode automatically; apply the configuration and rollout
+controls in this document before starting the attended service.
+
 ## Verification
 
 Run the complete repository test suite:
@@ -114,8 +128,9 @@ Run the complete repository test suite:
 python -m unittest discover -v
 ```
 
-The pull-request-only isolation job additionally drives the production pinned
-connector through a real TLS socket on TCP 443 with a controlled public address,
+The isolation job on pull requests and pushes to `main` additionally drives
+the production pinned connector through a real TLS socket on TCP 443 with a
+controlled public address,
 verified Host/SNI/certificate identity, simulated rebinding, and same-host and
 off-host redirect responses. It also downloads and installs the pinned revision into a clean
 external directory from the authorized Limitless Enterprise fork pinned at
