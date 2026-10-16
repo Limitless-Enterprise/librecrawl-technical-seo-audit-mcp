@@ -288,16 +288,21 @@ class PinnedTransportTests(unittest.TestCase):
         )
         started = time.monotonic()
         try:
-            with self.assertRaisesRegex(FirstlookFetchError, "deadline exceeded"):
-                boundary.get("https://audit.example/", deadline=started + 0.1)
+            for supplied in (True, False):
+                started = time.monotonic()
+                options = {"deadline": started + 0.1} if supplied else {}
+                with mock.patch("firstlook_security.FIRSTLOOK_REQUEST_SECONDS", 0.1):
+                    with self.assertRaisesRegex(FirstlookFetchError, "deadline exceeded"):
+                        boundary.get("https://audit.example/", **options)
             self.assertLess(time.monotonic() - started, 1)
             factory.assert_not_called()
         finally:
             release.set()
 
     def test_deadline_interrupts_dripping_headers_body_and_tls(self):
-        for phase in ("headers", "body", "tls"):
-            with self.subTest(phase=phase):
+        for phase, supplied in ((phase, supplied) for phase in ("headers", "body", "tls")
+                                for supplied in (True, False)):
+            with self.subTest(phase=phase, supplied=supplied):
                 client, peer = socket.socketpair()
                 stopped = threading.Event()
                 context = mock.Mock()
@@ -336,9 +341,11 @@ class PinnedTransportTests(unittest.TestCase):
                 )
                 started = time.monotonic()
                 try:
-                    with mock.patch("firstlook_security.socket.create_connection", return_value=client):
+                    options = {"deadline": started + 0.15} if supplied else {}
+                    with mock.patch("firstlook_security.socket.create_connection", return_value=client), \
+                         mock.patch("firstlook_security.FIRSTLOOK_REQUEST_SECONDS", 0.15):
                         with self.assertRaisesRegex(FirstlookFetchError, "deadline exceeded"):
-                            boundary.get("https://audit.example/", deadline=started + 0.15)
+                            boundary.get("https://audit.example/", **options)
                     self.assertLess(time.monotonic() - started, 1)
                 finally:
                     stopped.set()

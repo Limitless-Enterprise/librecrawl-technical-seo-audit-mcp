@@ -10,6 +10,7 @@ import json
 import time
 import re
 import threading
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 from collections import defaultdict
@@ -599,10 +600,18 @@ def _firstlook_site_check(base_url: str) -> dict:
         f"{root}/sitemap_index.xml",
         f"{root}/sitemap-index.xml",
     ]
-    sitemap_queue.extend(declared_sitemaps)
     rejected_declared = []
     sitemap_fetch_errors = []
     sitemap_documents = []
+    required_sitemaps = set()
+    for declared_url in declared_sitemaps:
+        try:
+            declared = FIRSTLOOK_BOUNDARY.validate_same_host_url(declared_url)
+        except FirstlookBoundaryError as exc:
+            rejected_declared.append({"url": declared_url, "reason": str(exc)})
+            continue
+        required_sitemaps.add(declared.normalized)
+        sitemap_queue.append(declared.normalized)
     sitemap_responses = 0
     sitemap_attempts = 0
     seen = set()
@@ -616,10 +625,10 @@ def _firstlook_site_check(base_url: str) -> dict:
             continue
         if validated.normalized in seen:
             continue
-        seen.add(validated.normalized)
         if sitemap_attempts >= FIRSTLOOK_MAX_SITEMAP_DOCUMENTS:
             sitemap_limit_reached = True
             break
+        seen.add(validated.normalized)
         sitemap_attempts += 1
         try:
             response = FIRSTLOOK_BOUNDARY.get(
@@ -635,17 +644,26 @@ def _firstlook_site_check(base_url: str) -> dict:
             if time.monotonic() >= deadline:
                 break
             continue
-        if response.status_code == 200 and (
-            "<urlset" in response.text or "<sitemapindex" in response.text
-        ):
-            is_index = "<sitemapindex" in response.text
+        sitemap_xml = None
+        if response.status_code == 200:
+            try:
+                sitemap_xml = ET.fromstring(response.text)
+            except ET.ParseError:
+                pass
+        if (sitemap_xml is None
+                or sitemap_xml.tag.rsplit("}", 1)[-1] not in ("urlset", "sitemapindex")):
+            sitemap_fetch_errors.append({
+                "url": validated.normalized,
+                "status_code": response.status_code,
+                "error": (f"HTTP {response.status_code}" if response.status_code != 200
+                          else "HTTP 200 response did not contain sitemap XML"),
+            })
+        else:
+            is_index = sitemap_xml.tag.rsplit("}", 1)[-1] == "sitemapindex"
             locations = [
-                html_unescape(location.strip())
-                for location in re.findall(
-                    r"<loc(?:\s[^>]*)?>(.*?)</loc>",
-                    response.text,
-                    flags=re.IGNORECASE | re.DOTALL,
-                )
+                element.text.strip()
+                for element in sitemap_xml.iter()
+                if element.tag.rsplit("}", 1)[-1] == "loc" and element.text
             ]
             document = {
                 "url": validated.normalized,
@@ -664,6 +682,7 @@ def _firstlook_site_check(base_url: str) -> dict:
                             {"url": location, "reason": str(exc)}
                         )
                         continue
+                    required_sitemaps.add(child)
                     sitemap_queue.append(child)
             else:
                 for location in locations:
@@ -681,6 +700,10 @@ def _firstlook_site_check(base_url: str) -> dict:
             }
             if _FIRSTLOOK_CRITICAL_CATEGORIES.issubset(discovered_categories):
                 break
+    sitemap_fetch_errors = [
+        failure for failure in sitemap_fetch_errors
+        if "status_code" not in failure or failure["url"] in required_sitemaps
+    ]
     if sitemap_documents:
         primary = sitemap_documents[0]
         results["sitemap"] = {
@@ -788,6 +811,10 @@ def _firstlook_site_check(base_url: str) -> dict:
         partial_reasons.append("sitemap document limit reached")
     if sitemap_fetch_errors:
         partial_reasons.append("one or more sitemap documents could not be fetched")
+    if rejected_declared:
+        partial_reasons.append("one or more declared sitemap URLs were rejected")
+    if required_sitemaps - seen:
+        partial_reasons.append("one or more declared sitemap documents were not attempted")
     if not sitemap_documents:
         partial_reasons.append("no sitemap document available for page discovery")
     if page_fetch_errors:

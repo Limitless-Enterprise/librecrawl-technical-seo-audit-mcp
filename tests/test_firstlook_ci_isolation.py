@@ -437,6 +437,21 @@ class FreshInstallIsolationTests(unittest.TestCase):
             major_version = int(version_result.stdout.strip().split(".", 1)[0])
             self.assertEqual(major_version, 1)
 
+            installed_tests = mcp_directory / "tests"
+            installed_tests.mkdir()
+            for filename in ("__init__.py", "test_firstlook_security.py",
+                             "test_firstlook_server_mode.py"):
+                shutil.copyfile(ROOT / "tests" / filename, installed_tests / filename)
+            regressions = subprocess.run(
+                [str(installed_python), "-m", "unittest", "-v",
+                 "tests.test_firstlook_security", "tests.test_firstlook_server_mode"],
+                cwd=mcp_directory,
+                env={**environment, "PYTHONPATH": ""},
+                capture_output=True, text=True, timeout=120,
+            )
+            self.assertEqual(regressions.returncode, 0,
+                             msg=regressions.stderr or regressions.stdout)
+
             client_script = r'''
                 import asyncio
                 import json

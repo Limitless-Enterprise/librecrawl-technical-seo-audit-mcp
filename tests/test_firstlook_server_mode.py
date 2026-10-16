@@ -113,6 +113,100 @@ class FirstlookServerModeTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
 
+    def test_schema_default_deadline_bounds_dns(self):
+        result = self.run_server_script(
+            r'''
+            import threading
+            import time
+            from unittest import mock
+            import server
+            from firstlook_security import FirstlookBoundary
+
+            release = threading.Event()
+            factory = mock.Mock()
+            server.FIRSTLOOK_BOUNDARY = FirstlookBoundary(
+                "https://limitlessenterprise.ai/audit",
+                resolver=lambda *_: (release.wait(2), ("93.184.216.34",))[1],
+                connection_factory=factory,
+            )
+            started = time.monotonic()
+            try:
+                with mock.patch("firstlook_security.FIRSTLOOK_REQUEST_SECONDS", 0.1):
+                    result = server.librecrawl_schema_check(
+                        "https://limitlessenterprise.ai/audit"
+                    )
+                assert result["success"] is False
+                assert "deadline exceeded" in result["error"]
+                assert time.monotonic() - started < 1
+                factory.assert_not_called()
+            finally:
+                release.set()
+            '''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+
+    def test_required_sitemap_failures_mark_coverage_partial(self):
+        result = self.run_server_script(
+            r'''
+            import server
+            from firstlook_security import FirstlookBoundary, PinnedResponse
+
+            root = "https://limitlessenterprise.ai"
+            approved = root + "/audit"
+            urlset = f"<urlset><url><loc>{approved}</loc></url></urlset>".encode()
+            namespaced = urlset.replace(b"<urlset>", b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">')
+            index = lambda child: (
+                f"<sitemapindex><sitemap><loc>{root}{child}</loc>"
+                "</sitemap></sitemapindex>"
+            ).encode()
+
+            class Boundary(FirstlookBoundary):
+                def get(self, url, **kwargs):
+                    status, body = responses.get(url, (404, b"missing"))
+                    return PinnedResponse(url, status, {}, body)
+
+            server.FIRSTLOOK_BOUNDARY = Boundary(approved)
+            for declaration in (True, False):
+                for status, body in ((200, urlset), (200, namespaced), (200, b"invalid"),
+                                     (200, b"<urlset>"), (200, b"<other/>"),
+                                     (302, b""), (404, b""), (503, b"")):
+                    responses = {
+                        root + "/robots.txt": (200, (
+                            f"Sitemap: {root}/critical.xml" if declaration else ""
+                        ).encode()),
+                        root + "/critical.xml": (status, body),
+                        root + "/": (200, b"<title>Home</title>"),
+                        approved: (200, b"<title>Audit</title>"),
+                    }
+                    if not declaration:
+                        responses[root + "/sitemap.xml"] = (200, index("/critical.xml"))
+                    result = server.librecrawl_site_check(approved)
+                    quick = result["quick_audit"]
+                    failed = status != 200 or body not in (urlset, namespaced)
+                    assert quick["partial"] is failed, (declaration, status, result)
+                    assert quick["canonical_pages_audited"] == 2
+                    errors = result["sitemap"].get("fetch_errors", [])
+                    assert len(errors) == int(failed), result
+                    if failed:
+                        assert errors[0]["url"] == root + "/critical.xml"
+                        assert errors[0]["status_code"] == status
+                        assert errors[0]["error"]
+
+            responses = {
+                root + "/robots.txt": (200, b""),
+                root + "/sitemap_index.xml": (200, index("/sitemap.xml")),
+                root + "/": (200, b"Home"),
+                approved: (200, b"Audit"),
+            }
+            result = server.librecrawl_site_check(approved)
+            assert result["quick_audit"]["partial"] is True
+            assert result["sitemap"]["fetch_errors"] == [{
+                "url": root + "/sitemap.xml", "status_code": 404, "error": "HTTP 404"
+            }]
+            '''
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr or result.stdout)
+
     def test_only_bounded_site_and_schema_requests_can_reach_transport(self):
         result = self.run_server_script(
             r'''

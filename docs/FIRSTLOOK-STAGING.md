@@ -63,6 +63,10 @@ Every direct request in the attended path:
    or off-host; and
 8. caps response bodies at 5 MiB.
 
+Every boundary fetch has a 30-second absolute deadline by default, including
+DNS resolution and TLS, header, and body operations. Site-check fetches share
+the site check's supplied overall deadline instead.
+
 The fixed-host site check may derive `/robots.txt` and the three conventional
 sitemap paths on the same approved host. It has a 30-second overall request
 budget and fetches at most 10 unique same-host sitemap documents, including
@@ -71,8 +75,9 @@ it selects and fetches at most 10 same-host pages. Selection prioritizes the
 homepage, booking, one content page, lead magnet, conversion CTA, service,
 offer, trust, and contact coverage. Query, canonical, and template variants are
 deduplicated; archive and utility paths are skipped. Each returned page records
-its discovery provenance, category, canonical result, and whether it was
-included after deduplication. Coverage is marked partial when a deadline,
+its discovery provenance, category, and HTTP status. Successfully fetched pages
+also record their canonical result and whether they were included after
+deduplication. Coverage is marked partial when a deadline,
 document/page limit, or fetch failure prevents complete bounded coverage.
 External links are never followed. HTTP and alternate-host canonicalization
 checks are intentionally skipped because they would cross the staging boundary.
@@ -112,6 +117,7 @@ verified Host/SNI/certificate identity, simulated rebinding, and same-host and
 off-host redirect responses. It also downloads and installs the pinned revision into a clean
 external directory from the authorized Limitless Enterprise fork pinned at
 `feecb119e7acbc8c611737bfd6c501eb24a28039`, rejects any other module source,
+runs the deadline and coverage regressions against the installed modules,
 and initializes the installed MCP server over stdio. These checks are opt-in
 because they require a disposable root-capable Linux runner and a fresh
 dependency environment.

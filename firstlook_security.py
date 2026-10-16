@@ -24,6 +24,7 @@ from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 FIRSTLOOK_MODE_ENV = "FIRSTLOOK_STAGING_MODE"
 FIRSTLOOK_APPROVED_URL = "https://limitlessenterprise.ai/audit"
+FIRSTLOOK_REQUEST_SECONDS = 30.0
 
 _TRUE_VALUES = frozenset({"true"})
 _FALSE_VALUES = frozenset({"", "false"})
@@ -373,26 +374,25 @@ class FirstlookBoundary:
         """GET one same-host URL without redirect handling or a second DNS lookup."""
         target = self.validate_same_host_url(url)
         if deadline is None:
-            addresses = tuple(self._resolver(target.hostname, 443))
-        else:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise FirstlookFetchError("request deadline exceeded")
-            resolved = queue.Queue(maxsize=1)
+            deadline = time.monotonic() + FIRSTLOOK_REQUEST_SECONDS
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise FirstlookFetchError("request deadline exceeded")
+        resolved = queue.Queue(maxsize=1)
 
-            def resolve():
-                try:
-                    resolved.put((tuple(self._resolver(target.hostname, 443)), None))
-                except Exception as exc:
-                    resolved.put((None, exc))
-
-            threading.Thread(target=resolve, daemon=True).start()
+        def resolve():
             try:
-                addresses, error = resolved.get(timeout=remaining)
-            except queue.Empty as exc:
-                raise FirstlookFetchError("request deadline exceeded during DNS") from exc
-            if error is not None:
-                raise error
+                resolved.put((tuple(self._resolver(target.hostname, 443)), None))
+            except Exception as exc:
+                resolved.put((None, exc))
+
+        threading.Thread(target=resolve, daemon=True).start()
+        try:
+            addresses, error = resolved.get(timeout=remaining)
+        except queue.Empty as exc:
+            raise FirstlookFetchError("request deadline exceeded during DNS") from exc
+        if error is not None:
+            raise error
         if not addresses:
             raise FirstlookDNSRejected(
                 f"DNS returned no A or AAAA addresses for {target.hostname}"
@@ -431,27 +431,23 @@ class FirstlookBoundary:
 
         failures: list[str] = []
         for pinned_ip in validated_addresses:
-            attempt_timeout = timeout
-            if deadline is not None:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise FirstlookFetchError("request deadline exceeded")
-                attempt_timeout = min(timeout, remaining)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise FirstlookFetchError("request deadline exceeded")
+            attempt_timeout = min(timeout, remaining)
             connection = self._connection_factory(
                 target.hostname, pinned_ip, attempt_timeout
             )
-            timer = None
-            if deadline is not None:
-                connection.deadline = deadline
-                abort = getattr(connection, "abort", connection.close)
-                timer = threading.Timer(max(0, deadline - time.monotonic()), abort)
-                timer.daemon = True
-                timer.start()
+            connection.deadline = deadline
+            abort = getattr(connection, "abort", connection.close)
+            timer = threading.Timer(max(0, deadline - time.monotonic()), abort)
+            timer.daemon = True
+            timer.start()
             try:
                 connection.request("GET", target.path, headers=request_headers)
                 response = connection.getresponse()
                 body = response.read(self._max_body_bytes + 1)
-                if deadline is not None and time.monotonic() >= deadline:
+                if time.monotonic() >= deadline:
                     raise FirstlookFetchError("request deadline exceeded")
                 if len(body) > self._max_body_bytes:
                     raise FirstlookFetchError(
@@ -470,12 +466,11 @@ class FirstlookBoundary:
             except FirstlookFetchError:
                 raise
             except Exception as exc:
-                if deadline is not None and time.monotonic() >= deadline:
+                if time.monotonic() >= deadline:
                     raise FirstlookFetchError("request deadline exceeded") from exc
                 failures.append(f"{pinned_ip}: {type(exc).__name__}: {exc}")
             finally:
-                if timer is not None:
-                    timer.cancel()
+                timer.cancel()
                 connection.close()
 
         detail = "; ".join(failures) or "no connection attempts"
